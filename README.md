@@ -72,11 +72,33 @@ locations is exactly the database this protocol exists to avoid.
 **Offline codes resolve with no network call at all.** Stop the API and paste
 one in — the position is inside the code.
 
+**With no signal, the offline code becomes the hero rather than the fallback.**
+Minting a session code needs a network; encoding an offline one does not. When
+the network is gone the offline code gets the full document treatment — same
+frame, same size, same phonetic grid — because at that moment it is not a
+consolation prize, it is the product.
+
+**A permanent code is never styled like an expiring one.** An offline code
+carries no expiry, no revocation and no provenance, so it gets indigo and the
+words "does not expire" where a session code gets a countdown. Letting someone
+believe their location stops being findable when it never does would be a lie
+about their own privacy, told by us.
+
+**Connectivity is evidence, not a flag.** `navigator.onLine` describes the link,
+not whether anything is reachable, and it is wrong constantly — captive-portal
+wifi being the everyday case. It is trusted in one direction only (when it says
+"offline" the link really is down); otherwise the answer comes from requests
+that were actually made, plus a probe of the resolver while we believe we are
+offline.
+
+**Coming back online never swaps the code underneath the caller.** By then they
+may have read the offline code down the phone. A session code is *offered*, and
+if they take it the screen keeps saying that the code they already spoke aloud
+still works and still never expires.
+
 ## Known gaps
 
-Not yet a PWA (no offline app shell), no SSE subscription for live sessions, and
-minting still assumes a network — the offline code is shown as a fallback rather
-than taking over when there is no signal.
+Not yet a PWA (no offline app shell), and no SSE subscription for live sessions.
 
 ## Licence
 

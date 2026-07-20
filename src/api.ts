@@ -49,6 +49,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
   return { ok: true, data: body as T };
 }
 
+/**
+ * Is the resolver actually reachable?
+ *
+ * `navigator.onLine` answers a different question — whether the OS thinks a
+ * link exists — and it is wrong constantly: a captive-portal wifi with no
+ * upstream, a phone holding a bar of signal that carries nothing, a VPN that
+ * dropped. The only honest test is to try to reach the thing we need.
+ *
+ * Only a 2xx counts. A captive portal happily returns 200 with its own login
+ * page, so this is not airtight either — that is why a failed mint is treated
+ * as the stronger signal and can always override it.
+ */
+export async function probeResolver(timeoutMs = 4000): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${BASE}/health`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface MintOptions {
   position: Position;
   mode: SessionMode;

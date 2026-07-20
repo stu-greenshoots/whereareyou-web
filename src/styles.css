@@ -276,6 +276,56 @@ body {
 
 .code-expired .code { opacity: 0.35; text-decoration: line-through; }
 
+/* ---- The offline code as the issued document --------------------------- */
+
+/* With no signal the offline code is not a fallback, it is the product, so it
+   gets the full document treatment. Indigo throughout, because indigo means
+   "offline code" everywhere in this system and nothing else.
+
+   What it deliberately does NOT get is anything shaped like a countdown. A
+   permanent code styled as an expiring one would tell the caller their location
+   stops being findable when it never does. */
+.code-doc-offline { border-color: var(--offline); }
+
+.code-doc-offline .code-doc-head {
+  background: var(--offline-bg);
+  border-bottom-color: var(--offline);
+}
+
+.code-doc-offline .phonetic-word { color: var(--offline); }
+
+/* Two more characters and two more groups than a session code, so it needs its
+   own ceiling to stay on one line — wrapping mid-code would be catastrophic to
+   read aloud. */
+.code-offline { font-size: clamp(26px, 9.2vw, 44px); }
+
+/* Not the countdown slot: no monospace, no tabular numerals, nothing that
+   suggests a number ticking down. */
+.code-permanent {
+  font-family: var(--font-serif);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--offline);
+}
+
+.offline-reason {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.notice-actions .button { flex: 1; min-width: 160px; }
+
 /* ---- Read-aloud block -------------------------------------------------- */
 
 /* The phonetic rendering is the ACTUAL interface — it is what travels down the
@@ -480,6 +530,11 @@ body {
 .notice-live { background: var(--live-bg); border-color: var(--live); flex-direction: row; align-items: center; }
 .notice-offline { background: var(--offline-bg); border-color: var(--offline); }
 
+/* An offer, not a state. Deliberately drawn in the accent rather than in
+   green: green means "live session, position still updating" everywhere in
+   this system, and a suggestion is not a session. */
+.notice-offer { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+
 /* Third-party reports must never be mistaken for the caller's own position.
    This is the single most consequential distinction in the dispatcher UI, so
    it gets the heaviest treatment in the system. */
@@ -566,6 +621,26 @@ body {
 }
 
 .theme-console .map { height: 340px; }
+
+.map-frame { position: relative; }
+
+/* Sits above Leaflet's tile (200) and marker (600) panes but clear of the
+   attribution line, which stays visible. */
+.map-offline {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 22px;
+  z-index: 700;
+  margin: 0;
+  padding: 9px 11px;
+  border-left: 4px solid var(--offline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 1px 6px #0003;
+}
 
 .pin-icon { background: none; border: 0; }
 

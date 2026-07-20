@@ -2,16 +2,43 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { encodeOffline, formatCode, formatOfflineCode, phoneticFor } from '@whereareyou/protocol';
 import type { CreateSessionResponse, Position, SessionMode } from '@whereareyou/protocol';
 import { mintSession, revokeSession, updatePosition } from './api.js';
+import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, inferSource, timeRemaining } from './formats.js';
+
+/** Why we ended up handing out a permanent code instead of a session. */
+type OfflineCause =
+  /** The browser says the link is down. */
+  | 'no-link'
+  /** We tried and nothing on the network answered. */
+  | 'no-network'
+  /** Something answered, and refused. */
+  | 'service';
 
 type Phase =
   | { name: 'idle' }
   | { name: 'locating' }
   | { name: 'located'; position: Position }
-  | { name: 'minting'; position: Position }
-  | { name: 'shared'; position: Position; session: CreateSessionResponse }
+  /**
+   * `spokenOfflineCode` is carried through minting and into the shared phase:
+   * once a caller has read a code down the phone it exists in the world, and
+   * every later screen has to keep telling the truth about it.
+   */
+  | { name: 'minting'; position: Position; spokenOfflineCode: string | null }
+  | {
+      name: 'shared';
+      position: Position;
+      session: CreateSessionResponse;
+      spokenOfflineCode: string | null;
+    }
+  | {
+      name: 'offline-shared';
+      position: Position;
+      code: string;
+      cause: OfflineCause;
+      detail: string | null;
+    }
   | { name: 'error'; message: string; recoverable: boolean };
 
 /** Somewhere recognisable to fall back to when there is no usable fix. */
@@ -53,6 +80,12 @@ export function Share() {
   const [note, setNote] = useState('');
   const [, forceTick] = useState(0);
   const watchRef = useRef<number | null>(null);
+  const { online, linkUp, reportReachable, reportUnreachable } = useConnectivity();
+
+  /** Set when the caller has declined the offer of an expiring code. */
+  const [keepingOfflineCode, setKeepingOfflineCode] = useState(false);
+  /** Set when "stop sharing" could not reach the server. */
+  const [stopFailure, setStopFailure] = useState<string | null>(null);
 
   // Drive the expiry countdown.
   useEffect(() => {
@@ -97,23 +130,72 @@ export function Share() {
     setPhase({ name: 'located', position: { ...DEMO_POSITION, takenAt: new Date().toISOString() } });
   }, []);
 
-  const share = useCallback(async () => {
+  /**
+   * Hand the caller a permanent, self-contained code.
+   *
+   * No network is involved: the position is inside the code. This is the whole
+   * point of the offline codec, and it is why losing signal degrades the
+   * product rather than breaking it.
+   */
+  const fallToOfflineCode = useCallback(
+    (position: Position, cause: OfflineCause, detail: string | null, existingCode?: string) => {
+      setKeepingOfflineCode(false);
+      setPhase({
+        name: 'offline-shared',
+        position,
+        code: existingCode ?? encodeOffline(position.lat, position.lon),
+        cause,
+        detail,
+      });
+    },
+    [],
+  );
+
+  const mint = useCallback(
+    async (position: Position, spokenOfflineCode: string | null) => {
+      setPhase({ name: 'minting', position, spokenOfflineCode });
+
+      const result = await mintSession({
+        position,
+        mode,
+        subject: thirdParty ? 'third-party' : 'self',
+        ...(note.trim() !== '' ? { note: note.trim() } : {}),
+      });
+
+      if (!result.ok) {
+        // A thrown fetch or a 5xx means the route is the problem; a 4xx means
+        // we got through and were refused, which says nothing about the link.
+        if (result.status === 0 || result.status >= 500) reportUnreachable();
+        else reportReachable();
+
+        // Never a dead end. We cannot mint a session, but we can always give
+        // the caller something they can read down a phone right now.
+        fallToOfflineCode(
+          position,
+          result.status === 0 ? 'no-network' : 'service',
+          result.message,
+          spokenOfflineCode ?? undefined,
+        );
+        return;
+      }
+
+      reportReachable();
+      setPhase({ name: 'shared', position, session: result.data, spokenOfflineCode });
+    },
+    [mode, thirdParty, note, fallToOfflineCode, reportReachable, reportUnreachable],
+  );
+
+  const share = useCallback(() => {
     if (phase.name !== 'located') return;
-    setPhase({ name: 'minting', position: phase.position });
 
-    const result = await mintSession({
-      position: phase.position,
-      mode,
-      subject: thirdParty ? 'third-party' : 'self',
-      ...(note.trim() !== '' ? { note: note.trim() } : {}),
-    });
-
-    if (!result.ok) {
-      setPhase({ name: 'error', message: result.message, recoverable: true });
+    // When the browser says the link is down it is telling the truth, and a
+    // request that cannot succeed is not worth a frightened person's seconds.
+    if (!linkUp) {
+      fallToOfflineCode(phase.position, 'no-link', null);
       return;
     }
-    setPhase({ name: 'shared', position: phase.position, session: result.data });
-  }, [phase, mode, thirdParty, note]);
+    void mint(phase.position, null);
+  }, [phase, linkUp, mint, fallToOfflineCode]);
 
   // Live mode: stream position updates until expiry or revocation.
   useEffect(() => {
@@ -143,16 +225,42 @@ export function Share() {
     };
   }, [phase, mode]);
 
+  const startAgain = useCallback(() => {
+    setStopFailure(null);
+    setKeepingOfflineCode(false);
+    setPhase({ name: 'idle' });
+  }, []);
+
   const revoke = useCallback(async () => {
     if (phase.name !== 'shared') return;
-    await revokeSession(phase.session.code, phase.session.updateToken);
-    setPhase({ name: 'idle' });
-  }, [phase]);
+
+    const result = await revokeSession(phase.session.code, phase.session.updateToken);
+    if (!result.ok) {
+      if (result.status === 0) reportUnreachable();
+      // Silently returning to the start screen here would tell the caller their
+      // location had stopped being shared when it had not. Being wrong about
+      // that is the worst thing this screen can do.
+      setStopFailure(result.message);
+      return;
+    }
+    startAgain();
+  }, [phase, reportUnreachable, startAgain]);
 
   const nativeShare = useCallback(async () => {
-    if (phase.name !== 'shared') return;
-    const { display, phonetic } = phase.session;
-    const text = `My location code is ${display} — spoken: ${phonetic}. Resolve it at ${location.origin}/resolve`;
+    let text: string;
+    if (phase.name === 'shared') {
+      const { display, phonetic } = phase.session;
+      text = `My location code is ${display} — spoken: ${phonetic}. Resolve it at ${location.origin}/resolve`;
+    } else if (phase.name === 'offline-shared') {
+      // Spelled out as an offline code, because it behaves differently from a
+      // session code at the other end and the recipient needs to know that.
+      text = `My offline location code is ${formatOfflineCode(phase.code)} — spoken: ${[...phase.code]
+        .map((char) => phoneticFor(char))
+        .join(' ')}. It does not expire. Resolve it at ${location.origin}/resolve`;
+    } else {
+      return;
+    }
+
     if ('share' in navigator) {
       try {
         await navigator.share({ title: 'My location code', text });
@@ -169,6 +277,8 @@ export function Share() {
   if (phase.name === 'idle' || phase.name === 'locating' || phase.name === 'error') {
     return (
       <div className="stack centred">
+        {!online && <NoSignalNotice linkUp={linkUp} />}
+
         <button className="big-button" onClick={locate} disabled={phase.name === 'locating'}>
           {phase.name === 'locating' ? 'Getting your location…' : 'Share my location'}
         </button>
@@ -193,20 +303,20 @@ export function Share() {
     );
   }
 
-  const position =
-    phase.name === 'located' || phase.name === 'minting' || phase.name === 'shared'
-      ? phase.position
-      : DEMO_POSITION;
+  const position = phase.position;
   const formats = allFormats(position.lat, position.lon);
 
   if (phase.name === 'located' || phase.name === 'minting') {
     return (
       <div className="stack">
+        {!online && <NoSignalNotice linkUp={linkUp} />}
+
         <Map
           lat={position.lat}
           lon={position.lon}
           accuracyM={position.accuracyM}
           thirdParty={thirdParty}
+          offline={!online}
           onMove={(lat, lon) =>
             setPhase({
               name: 'located',
@@ -230,12 +340,17 @@ export function Share() {
         <label className="toggle">
           <input
             type="checkbox"
-            checked={mode === 'live'}
+            checked={mode === 'live' && online}
+            disabled={!online}
             onChange={(event) => setMode(event.target.checked ? 'live' : 'static')}
           />
           <span>
             <strong>Keep updating my position</strong>
-            <small>For when you're moving. Uses more battery.</small>
+            <small>
+              {online
+                ? "For when you're moving. Uses more battery."
+                : 'Needs a connection — a code that follows you has to live on the server.'}
+            </small>
           </span>
         </label>
 
@@ -250,9 +365,30 @@ export function Share() {
         <CoordinatePanel formats={formats} position={position} />
 
         <button className="big-button" onClick={share} disabled={phase.name === 'minting'}>
-          {phase.name === 'minting' ? 'Creating code…' : 'Get my code'}
+          {phase.name === 'minting'
+            ? 'Creating code…'
+            : online
+              ? 'Get my code'
+              : 'Get my offline code'}
         </button>
       </div>
+    );
+  }
+
+  if (phase.name === 'offline-shared') {
+    return (
+      <OfflineShared
+        phase={phase}
+        formats={formats}
+        thirdParty={thirdParty}
+        liveWanted={mode === 'live'}
+        online={online}
+        keeping={keepingOfflineCode}
+        onKeep={() => setKeepingOfflineCode(true)}
+        onUpgrade={() => void mint(phase.position, phase.code)}
+        onShare={() => void nativeShare()}
+        onStartAgain={startAgain}
+      />
     );
   }
 
@@ -279,16 +415,64 @@ export function Share() {
         </div>
       </div>
 
+      {/* The caller already read this one aloud. It is out in the world and
+          permanent, and quietly replacing it with the code above would leave
+          them believing something untrue about their own privacy. */}
+      {phase.spokenOfflineCode !== null && (
+        <div className="notice notice-offline">
+          <strong>You already read out {formatOfflineCode(phase.spokenOfflineCode)}.</strong>
+          <span>
+            That one still works, and it still never expires — stopping the code above does not
+            take it back. Tell the operator to use the new code if you can.
+          </span>
+        </div>
+      )}
+
       <div className="row">
         <button className="button button-primary" onClick={nativeShare}>
           Share code
         </button>
-        <button className="button button-danger" onClick={revoke}>
+        <button
+          className="button button-danger"
+          onClick={expired ? startAgain : () => void revoke()}
+        >
           {expired ? 'Start again' : 'Stop sharing'}
         </button>
       </div>
 
-      {mode === 'live' && !expired && (
+      {stopFailure !== null && (
+        <div className="notice notice-warn">
+          <strong>Could not stop the sharing.</strong>
+          <span>
+            {stopFailure} The code above is still live and will stop on its own in {remaining}.
+          </span>
+          <div className="notice-actions">
+            <button className="button" onClick={() => void revoke()}>
+              Try again
+            </button>
+            <button className="link-button" onClick={startAgain}>
+              Leave it running and start over
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* The session lives on the server, so the code keeps resolving even
+          though this phone has gone quiet. Saying so is the difference between
+          a calm screen and a caller reading out a code they think is dead. */}
+      {!online && !expired && (
+        <div className="notice notice-warn">
+          <strong>You've lost your connection.</strong>
+          <span>
+            The code above still works — it was handed to the server before the signal went.
+            {mode === 'live' && ' Your position has stopped updating, though.'} If the operator
+            cannot find it, read out the offline code below instead: that one needs no network at
+            either end.
+          </span>
+        </div>
+      )}
+
+      {mode === 'live' && !expired && online && (
         <div className="notice notice-live">
           <span className="live-dot" /> Your position is being shared live
         </div>
@@ -299,9 +483,157 @@ export function Share() {
         lon={position.lon}
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
+        offline={!online}
       />
 
       <CoordinatePanel formats={formats} position={position} />
+    </div>
+  );
+}
+
+/**
+ * The offline code presented as the issued document.
+ *
+ * Everything a session code gets — the frame, the size, the phonetic grid — an
+ * offline code gets too, because with no signal it is not a fallback, it is the
+ * product. What it does not get is anything that resembles a countdown: this
+ * code cannot be stopped, and styling it like one that can would be a lie about
+ * the caller's own privacy.
+ */
+function OfflineShared({
+  phase,
+  formats,
+  thirdParty,
+  liveWanted,
+  online,
+  keeping,
+  onKeep,
+  onUpgrade,
+  onShare,
+  onStartAgain,
+}: {
+  phase: Extract<Phase, { name: 'offline-shared' }>;
+  formats: ReturnType<typeof allFormats>;
+  thirdParty: boolean;
+  liveWanted: boolean;
+  online: boolean;
+  keeping: boolean;
+  onKeep: () => void;
+  onUpgrade: () => void;
+  onShare: () => void;
+  onStartAgain: () => void;
+}) {
+  const { position, code, cause, detail } = phase;
+
+  return (
+    <div className="stack">
+      <div className="code-doc code-doc-offline">
+        <div className="code-doc-head">
+          <span className="label">Offline code</span>
+          <span className="code-permanent">Does not expire</span>
+        </div>
+
+        <div className="code-doc-body">
+          <p className="code code-offline">{formatOfflineCode(code)}</p>
+
+          <div className="read-aloud">
+            <span className="label">Read aloud to the operator</span>
+            <PhoneticGrid code={code} />
+          </div>
+        </div>
+      </div>
+
+      <div className="notice notice-offline">
+        <strong>This code never expires and cannot be stopped.</strong>
+        <span>
+          Your position is built into the code itself, which is what lets it work with no signal —
+          at either end. It also means there is nothing to switch off: anyone who has these ten
+          characters can find this spot, indefinitely. Only give it to the operator.
+        </span>
+      </div>
+
+      <div className="row">
+        <button className="button button-primary" onClick={onShare}>
+          Share code
+        </button>
+        <button className="button" onClick={onStartAgain}>
+          Start again
+        </button>
+      </div>
+
+      <p className="offline-reason">
+        {cause === 'no-link' && 'Your phone has no connection, so there was no way to create a code that expires.'}
+        {cause === 'no-network' && 'Nothing on the network answered, so there was no way to create a code that expires.'}
+        {cause === 'service' &&
+          (detail !== null
+            ? `The code service could be reached but would not issue a code — ${detail}`
+            : 'The code service could be reached but would not issue a code.')}
+        {liveWanted && ' A code that follows you as you move needs a connection; this one is a single fixed point.'}
+      </p>
+
+      {/* Never swap the code underneath them. They may already have read it
+          down the phone, so an expiring code is offered, never imposed. */}
+      {online && !keeping && (
+        <div className="notice notice-offer">
+          <strong>
+            {cause === 'service'
+              ? 'You can try again for a code that expires.'
+              : "You're back online."}
+          </strong>
+          <span>
+            A session code expires after half an hour and you can stop it at any time. The offline
+            code above keeps working either way — if you have already read it out, the operator can
+            still use it.
+          </span>
+          <div className="notice-actions">
+            <button className="button button-primary" onClick={onUpgrade}>
+              Get an expiring code
+            </button>
+            <button className="link-button" onClick={onKeep}>
+              Keep this one
+            </button>
+          </div>
+        </div>
+      )}
+
+      {online && keeping && (
+        <button className="link-button" onClick={onUpgrade}>
+          Get an expiring code instead
+        </button>
+      )}
+
+      {!online && (
+        <button className="link-button" onClick={onUpgrade}>
+          Try again for a code that expires
+        </button>
+      )}
+
+      <Map
+        lat={position.lat}
+        lon={position.lon}
+        accuracyM={position.accuracyM}
+        thirdParty={thirdParty}
+        offline={!online}
+      />
+
+      <CoordinatePanel formats={formats} position={position} omitOfflineCode />
+    </div>
+  );
+}
+
+/**
+ * Shown before a code exists, so the caller learns what they are about to get
+ * *before* they press the button rather than being surprised by a permanent
+ * code afterwards.
+ */
+function NoSignalNotice({ linkUp }: { linkUp: boolean }) {
+  return (
+    <div className="notice notice-offline">
+      <strong>{linkUp ? 'Cannot reach the network.' : 'No connection.'}</strong>
+      <span>
+        You can still share where you are. You will get an offline code, which works with no signal
+        because your position is inside the code — but it never expires and cannot be taken back.
+      </span>
     </div>
   );
 }
@@ -336,9 +668,13 @@ function PhoneticGrid({ code }: { code: string }) {
 function CoordinatePanel({
   formats,
   position,
+  omitOfflineCode = false,
 }: {
   formats: ReturnType<typeof allFormats>;
   position: Position;
+  /** Set when the offline code is already the hero and repeating it would
+      invite the caller to read out the same thing twice. */
+  omitOfflineCode?: boolean;
 }) {
   const offlineCode = encodeOffline(position.lat, position.lon);
 
@@ -350,7 +686,9 @@ function CoordinatePanel({
       {/* Computed on this device with no network call, so it survives losing
           signal after the page has loaded — the one thing a session code
           cannot do. Listed first for that reason. */}
-      <CopyRow label="Offline code — say this one" value={formatOfflineCode(offlineCode)} />
+      {!omitOfflineCode && (
+        <CopyRow label="Offline code — say this one" value={formatOfflineCode(offlineCode)} />
+      )}
       <CopyRow label="Latitude, longitude" value={formats.latLon} />
       {formats.plusCode !== null && <CopyRow label="Plus Code" value={formats.plusCode} />}
       {formats.osGridRef !== null && <CopyRow label="OS grid reference" value={formats.osGridRef} />}

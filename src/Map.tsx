@@ -23,6 +23,8 @@ export interface MapProps {
   onMove?: (lat: number, lon: number) => void;
   /** Previous positions of a live session, oldest first. */
   trail?: Array<[number, number]>;
+  /** Tiles come from the network. When there is none, say so. */
+  offline?: boolean;
   className?: string;
 }
 
@@ -33,6 +35,7 @@ export function Map({
   thirdParty = false,
   onMove,
   trail,
+  offline = false,
   className,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -65,11 +68,16 @@ export function Map({
     // Leaflet measures the container on creation. If it was hidden or still
     // being laid out at that moment it computes a zero size and renders a grey
     // box, so re-measure once the browser has settled.
-    requestAnimationFrame(() => instance.invalidateSize());
+    // Cancelled on teardown: a map that is created and destroyed within the
+    // same frame — StrictMode's double mount, or a phase change landing on top
+    // of one — otherwise leaves this callback to run against a removed map and
+    // throw out of the animation frame.
+    const measure = requestAnimationFrame(() => instance.invalidateSize());
 
     setMap(instance);
 
     return () => {
+      cancelAnimationFrame(measure);
       instance.remove();
       setMap(null);
       // Drop the layer handles too. They belong to the map just destroyed, and
@@ -156,5 +164,18 @@ export function Map({
     };
   }, [map, onMove]);
 
-  return <div ref={containerRef} className={className ?? 'map'} />;
+  // Tiles are the one thing on this screen that genuinely needs the network.
+  // Without a word of explanation an empty grey rectangle reads as "broken",
+  // which is not what a person in trouble should be looking at — the position
+  // itself is unaffected and is written out in full directly below.
+  return (
+    <div className="map-frame">
+      <div ref={containerRef} className={className ?? 'map'} />
+      {offline && (
+        <p className="map-offline">
+          Map pictures need a connection. Your position is still exact — it is written out below.
+        </p>
+      )}
+    </div>
+  );
 }
