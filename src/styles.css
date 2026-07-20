@@ -1,0 +1,584 @@
+/* ============================================================================
+   whereareyou — visual system
+
+   Two surfaces with deliberately different characters:
+
+   .theme-public   The share screen. Presented as an ISSUED DOCUMENT — a
+                   reference number on a ticket. Light by default, because
+                   emergencies happen outdoors in daylight where dark-on-light
+                   at full brightness is the most legible thing there is.
+                   Follows the system into dark mode at night.
+
+   .theme-console  The dispatcher console. Dark regardless of system
+                   preference, like every other tool that lives on a control
+                   room wall. Denser, faster, unmistakably not the public app.
+
+   Both share one type scale and one set of semantic colours, so they read as
+   one system rather than two products.
+   ========================================================================= */
+
+:root {
+  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Serif small-caps labels are what make this feel issued rather than
+     designed. Used only for labels, never for body copy. */
+  --font-serif: ui-serif, Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+
+  /* Semantic colours. These never change meaning between themes:
+     amber is always "reported by a third party", green is always "live",
+     indigo is always "offline code". Colour carries information here, so it
+     is never used decoratively. */
+  --third-party: #b45309;
+  --third-party-bg: #fef3c7;
+  --live: #15803d;
+  --live-bg: #dcfce7;
+  --offline: #4338ca;
+  --offline-bg: #e0e7ff;
+  --danger: #b91c1c;
+
+  --radius: 4px;
+}
+
+/* ---- Public surface: light ------------------------------------------- */
+
+.theme-public {
+  --bg: #fbfbf9;
+  --surface: #ffffff;
+  --surface-2: #f4f4f1;
+  --text: #14161a;
+  --text-dim: #5f6672;
+  --rule: #14161a;
+  --rule-soft: #d8d8d2;
+  --accent: #1d4ed8;
+  --accent-soft: #eff3ff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .theme-public {
+    --bg: #14161a;
+    --surface: #1c1f25;
+    --surface-2: #23272f;
+    --text: #f2f3f5;
+    --text-dim: #98a0ad;
+    --rule: #f2f3f5;
+    --rule-soft: #343941;
+    --accent: #7ba1ff;
+    --accent-soft: #1e2740;
+
+    --third-party: #fbbf24;
+    --third-party-bg: #3b2c07;
+    --live: #4ade80;
+    --live-bg: #0b2e18;
+    --offline: #a5b4fc;
+    --offline-bg: #1e1b4b;
+    --danger: #f87171;
+  }
+}
+
+/* ---- Console surface: always dark ------------------------------------- */
+
+.theme-console {
+  --bg: #0a0c10;
+  --surface: #12151b;
+  --surface-2: #1a1e26;
+  --text: #e8ebf0;
+  --text-dim: #8b94a3;
+  --rule: #2c333d;
+  --rule-soft: #222831;
+  --accent: #4d8dff;
+  --accent-soft: #14203a;
+
+  --third-party: #f59e0b;
+  --third-party-bg: #3b2708;
+  --live: #34d399;
+  --live-bg: #06281c;
+  --offline: #a5b4fc;
+  --offline-bg: #1e1b4b;
+  --danger: #f87171;
+}
+
+/* ---- Base ------------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-public .app { max-width: 560px; margin: 0 auto; }
+.theme-console .app { max-width: 900px; margin: 0 auto; }
+
+/* Small serif caps. The single most identity-carrying element in the system. */
+.label {
+  font-family: var(--font-serif);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+
+/* ---- Chrome ----------------------------------------------------------- */
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 18px 20px 12px;
+  border-bottom: 2px solid var(--rule);
+}
+
+.brand {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.nav { display: flex; gap: 18px; }
+
+.nav-item {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.nav-item:hover { color: var(--text); }
+.nav-active { color: var(--text); border-bottom: 2px solid var(--accent); padding-bottom: 2px; }
+
+.main { flex: 1; padding: 20px; }
+.theme-console .main { padding: 16px 20px; }
+
+.footer {
+  padding: 16px 20px 24px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: center;
+  border-top: 1px solid var(--rule-soft);
+}
+
+/* ---- Layout ----------------------------------------------------------- */
+
+.stack { display: flex; flex-direction: column; gap: 20px; }
+.theme-console .stack { gap: 12px; }
+.centred { align-items: stretch; justify-content: center; min-height: 58dvh; }
+.row { display: flex; gap: 10px; }
+.row > * { flex: 1; }
+
+/* ---- Buttons ---------------------------------------------------------- */
+
+.big-button {
+  width: 100%;
+  min-height: 88px;
+  padding: 24px;
+  font-family: var(--font-ui);
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+  /* Pressed one-handed, possibly in the dark, by shaking hands. */
+}
+
+.big-button:hover:not(:disabled) { filter: brightness(1.1); }
+.big-button:active:not(:disabled) { transform: translateY(1px); }
+.big-button:disabled { opacity: 0.55; cursor: default; }
+
+.button {
+  padding: 13px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 2px solid var(--rule);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) { background: var(--surface-2); }
+.button:disabled { opacity: 0.4; cursor: default; }
+
+.button-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.button-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); }
+.button-danger { border-color: var(--danger); color: var(--danger); }
+.button-danger:hover { background: transparent; border-color: var(--danger); opacity: 0.75; }
+
+.link-button {
+  background: none;
+  border: 0;
+  padding: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---- The code document ------------------------------------------------ */
+
+/* The hero. Framed like a certificate or ticket stub: heavy outer rule,
+   generous internal space, nothing competing with the code itself. */
+.code-doc {
+  background: var(--surface);
+  border: 2px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.code-doc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 18px;
+  border-bottom: 2px solid var(--rule);
+  background: var(--surface-2);
+}
+
+.code-doc-body { padding: 28px 18px 22px; text-align: center; }
+
+.code {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: clamp(40px, 14vw, 58px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  /* Wrapping a code mid-string would be catastrophic to read aloud. */
+  white-space: nowrap;
+}
+
+.code-expired .code { opacity: 0.35; text-decoration: line-through; }
+
+/* ---- Read-aloud block -------------------------------------------------- */
+
+/* The phonetic rendering is the ACTUAL interface — it is what travels down the
+   phone line. Styled as an instruction to be performed, not as a caption.
+   Each word sits under its character so caller and dispatcher can
+   cross-reference a symbol without re-reading the whole string. */
+.read-aloud {
+  border-top: 1px solid var(--rule-soft);
+  margin-top: 24px;
+  padding-top: 16px;
+  text-align: left;
+}
+
+.phonetic-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 12px;
+}
+
+.phonetic-pair {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 44px;
+}
+
+.phonetic-char {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+.phonetic-word {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1.2;
+}
+
+.code-expiry {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Panels ----------------------------------------------------------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.theme-console .panel { padding: 12px 14px; }
+
+.panel-title {
+  margin: 0 0 4px;
+  font-family: var(--font-serif);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.panel-hint { margin: 0 0 14px; font-size: 13px; color: var(--text-dim); }
+
+/* ---- Copyable rows ---------------------------------------------------- */
+
+.copy-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1px 12px;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.copy-row:first-of-type { border-top: 0; padding-top: 4px; }
+
+.copy-label {
+  grid-column: 1;
+  font-family: var(--font-serif);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.copy-value {
+  grid-column: 1;
+  grid-row: 2;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+
+.copy-value a { color: var(--accent); }
+
+.copy-button {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  padding: 7px 12px;
+  font-family: var(--font-serif);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+  min-width: 74px;
+}
+
+.copy-button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- Inputs ----------------------------------------------------------- */
+
+.resolve-form { display: flex; flex-direction: column; gap: 8px; }
+
+.field-label {
+  font-family: var(--font-serif);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+
+.code-input {
+  width: 100%;
+  padding: 15px;
+  font-family: var(--font-mono);
+  font-size: 21px;
+  letter-spacing: 0.06em;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--rule);
+  border-radius: var(--radius);
+  text-transform: uppercase;
+}
+
+.code-input::placeholder { text-transform: none; color: var(--text-dim); font-size: 15px; }
+.code-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+.note-input {
+  width: 100%;
+  padding: 13px;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius);
+}
+
+.note-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.parse-feedback { min-height: 20px; font-size: 13px; }
+.parse-ok { color: var(--live); }
+.parse-bad { color: var(--third-party); }
+
+.toggle {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+}
+
+.toggle:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.toggle input { margin-top: 3px; width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--accent); }
+.toggle span { display: flex; flex-direction: column; gap: 2px; }
+.toggle small { color: var(--text-dim); font-size: 13px; }
+
+/* ---- Notices ---------------------------------------------------------- */
+
+.notice {
+  padding: 13px 15px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  /* Left rule rather than a full border: reads as an annotation on the
+     document rather than an alarm. */
+  border-left: 4px solid;
+}
+
+.notice p { margin: 0; }
+.notice-warn { background: var(--third-party-bg); border-color: var(--third-party); color: var(--text); }
+.notice-live { background: var(--live-bg); border-color: var(--live); flex-direction: row; align-items: center; }
+.notice-offline { background: var(--offline-bg); border-color: var(--offline); }
+
+/* Third-party reports must never be mistaken for the caller's own position.
+   This is the single most consequential distinction in the dispatcher UI, so
+   it gets the heaviest treatment in the system. */
+.notice-thirdparty {
+  background: var(--third-party-bg);
+  border-left-width: 6px;
+  border-color: var(--third-party);
+  color: var(--text);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  display: inline-block;
+  margin-right: 8px;
+  flex-shrink: 0;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+
+/* ---- Dispatcher fix summary ------------------------------------------- */
+
+.fix-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.fix-badge {
+  background: var(--accent);
+  color: #fff;
+  padding: 3px 9px;
+  border-radius: 2px;
+  font-family: var(--font-serif);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.fix-badge-third { background: var(--third-party); }
+.fix-expiry { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.caller-note {
+  margin: 13px 0 0;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--rule-soft);
+  font-size: 15px;
+}
+
+.live-indicator { margin: 12px 0 0; font-size: 13px; color: var(--live); display: flex; align-items: center; }
+
+/* ---- History ---------------------------------------------------------- */
+
+.history { list-style: none; margin: 0; padding: 0; }
+
+.history li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.history li:first-child { border-top: 0; }
+.history .link-button { font-family: var(--font-mono); text-decoration: none; letter-spacing: 0.04em; }
+.history-time { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
+
+/* ---- Map -------------------------------------------------------------- */
+
+.map {
+  height: 280px;
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-soft);
+  z-index: 0;
+}
+
+.theme-console .map { height: 340px; }
+
+.pin-icon { background: none; border: 0; }
+
+.pin {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--pin-colour);
+  border: 3px solid #fff;
+  box-shadow: 0 1px 6px #0007;
+}
+
+/* Leaflet's own controls sit outside our system; tone them down so they do
+   not compete with the pin. */
+.leaflet-control-attribution { font-size: 9px !important; opacity: 0.7; }
