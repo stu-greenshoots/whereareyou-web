@@ -2,10 +2,17 @@ import { useEffect, useState } from 'react';
 import { Share } from './Share.jsx';
 import { Resolve } from './Resolve.jsx';
 
-type Route = 'share' | 'resolve';
+type Route = 'share' | 'lookup';
 
+/**
+ * `/lookup` is the canonical path. `/resolve` is kept as an alias because codes
+ * already shared by the native share sheet carry that URL in their text, and a
+ * link someone has read out or pasted must not stop working because we renamed
+ * a screen.
+ */
 function currentRoute(): Route {
-  return window.location.pathname.startsWith('/resolve') ? 'resolve' : 'share';
+  const { pathname } = window.location;
+  return pathname.startsWith('/lookup') || pathname.startsWith('/resolve') ? 'lookup' : 'share';
 }
 
 export function App() {
@@ -18,7 +25,7 @@ export function App() {
   }, []);
 
   const navigate = (next: Route) => {
-    window.history.pushState({}, '', next === 'resolve' ? '/resolve' : '/');
+    window.history.pushState({}, '', next === 'lookup' ? '/lookup' : '/');
     setRoute(next);
   };
 
@@ -29,7 +36,7 @@ export function App() {
   // Applied to <body> rather than a wrapper so the background also covers
   // overscroll — otherwise a rubber-band scroll on iOS flashes white behind a
   // dark console.
-  const theme = route === 'resolve' ? 'theme-console' : 'theme-public';
+  const theme = route === 'lookup' ? 'theme-console' : 'theme-public';
 
   useEffect(() => {
     document.body.classList.remove('theme-public', 'theme-console');
@@ -52,10 +59,10 @@ export function App() {
             Share
           </button>
           <button
-            className={route === 'resolve' ? 'nav-item nav-active' : 'nav-item'}
-            onClick={() => navigate('resolve')}
+            className={route === 'lookup' ? 'nav-item nav-active' : 'nav-item'}
+            onClick={() => navigate('lookup')}
           >
-            Dispatcher
+            Look up
           </button>
         </nav>
       </header>

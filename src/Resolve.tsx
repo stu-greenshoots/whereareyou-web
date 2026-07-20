@@ -86,7 +86,7 @@ export function Resolve() {
         setSession(null);
         setError(
           result.error === 'not-found'
-            ? 'No live session for that code. It may have expired, been stopped, or already been claimed by another control room.'
+            ? 'No live session for that code. It may have expired, been stopped, or already been looked up by someone else.'
             : result.message,
         );
         return;
@@ -151,7 +151,7 @@ export function Resolve() {
         </div>
 
         <button className="button" type="submit" disabled={busy || !ready}>
-          {busy ? 'Looking up…' : 'Resolve'}
+          {busy ? 'Looking up…' : 'Look up'}
         </button>
       </form>
 
@@ -186,7 +186,7 @@ export function Resolve() {
       )}
 
       <details className="panel">
-        <summary className="panel-title">Resolver settings</summary>
+        <summary className="panel-title">Look-up settings</summary>
         <label className="field-label" htmlFor="api-key">
           API key
         </label>

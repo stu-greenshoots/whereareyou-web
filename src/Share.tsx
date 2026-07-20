@@ -250,13 +250,13 @@ export function Share() {
     let text: string;
     if (phase.name === 'shared') {
       const { display, phonetic } = phase.session;
-      text = `My location code is ${display} — spoken: ${phonetic}. Resolve it at ${location.origin}/resolve`;
+      text = `My location code is ${display} — spoken: ${phonetic}. Look it up at ${location.origin}/lookup`;
     } else if (phase.name === 'offline-shared') {
       // Spelled out as an offline code, because it behaves differently from a
       // session code at the other end and the recipient needs to know that.
       text = `My offline location code is ${formatOfflineCode(phase.code)} — spoken: ${[...phase.code]
         .map((char) => phoneticFor(char))
-        .join(' ')}. It does not expire. Resolve it at ${location.origin}/resolve`;
+        .join(' ')}. It does not expire. Look it up at ${location.origin}/lookup`;
     } else {
       return;
     }
