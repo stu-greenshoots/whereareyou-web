@@ -1,0 +1,125 @@
+/* ============================================================================
+   whereareyou — colour
+
+   Colour carries information here. It is never decorative. Three semantic
+   states each own a hue and are used for nothing else, ever:
+
+     amber   REPORTED — a third-party location. Someone phoning about a fire
+             across the road, NOT where they are standing.
+     green   LIVE — a session still updating its position.
+     indigo  OFFLINE — a permanent grid reference. No expiry, no timer.
+
+   Blue is the primary-action / caller's-own-position accent, deliberately
+   distinct from all three semantics so it never competes with them.
+
+   Two surfaces, two themes. They share this one semantic vocabulary so they
+   read as one system:
+
+     .theme-public   light by default (outdoor daylight legibility), follows
+                     the system into dark at night.
+     .theme-console  dark always, like every tool on a control-room wall.
+
+   Values are ported verbatim from the reference implementation
+   (whereareyou-web/src/styles.css) so tokens and shipped product stay in lock-
+   step.  Contrast targets: AAA on anything safety-critical, AA everywhere.
+   ========================================================================= */
+
+:root {
+  /* ---- Semantic hues — identical meaning in every theme ---------------- */
+  --third-party: #b45309;      /* amber — REPORTED */
+  --third-party-bg: #fef3c7;
+  --live: #15803d;             /* green — LIVE */
+  --live-bg: #dcfce7;
+  --offline: #4338ca;          /* indigo — OFFLINE code */
+  --offline-bg: #e0e7ff;
+  --danger: #b91c1c;           /* destructive / expired route */
+
+  /* Fixed pin colours drawn on the map (never theme-shifted, so a screenshot
+     reads the same on any surface). */
+  --pin-self: #2563eb;         /* caller's own position — blue */
+  --pin-reported: #d97706;     /* reported location — amber */
+
+  /* Default neutrals == the public/light surface, so a page that forgets to set
+     a theme class is still legible. .theme-public and .theme-console below
+     fully override these. */
+  --bg: #fbfbf9;
+  --surface: #ffffff;
+  --surface-2: #f4f4f1;
+  --text: #14161a;
+  --text-dim: #5f6672;
+  --rule: #14161a;
+  --rule-soft: #d8d8d2;
+  --accent: #1d4ed8;
+  --accent-soft: #eff3ff;
+  --accent-on: #ffffff;
+}
+
+/* ---- Public surface: LIGHT (default) ---------------------------------- */
+
+.theme-public {
+  --bg: #fbfbf9;
+  --surface: #ffffff;
+  --surface-2: #f4f4f1;
+  --text: #14161a;
+  --text-dim: #5f6672;
+  --rule: #14161a;             /* heavy "issued document" rule */
+  --rule-soft: #d8d8d2;
+  --accent: #1d4ed8;
+  --accent-soft: #eff3ff;
+  --accent-on: #ffffff;        /* text on --accent */
+
+  /* Semantic text-on-background pairs are inherited from :root above. */
+  color-scheme: light;
+}
+
+/* Public surface follows the system into dark at night. Semantics re-tuned
+   for a dark backdrop while keeping the same meanings. */
+@media (prefers-color-scheme: dark) {
+  .theme-public {
+    --bg: #14161a;
+    --surface: #1c1f25;
+    --surface-2: #23272f;
+    --text: #f2f3f5;
+    --text-dim: #98a0ad;
+    --rule: #f2f3f5;
+    --rule-soft: #343941;
+    --accent: #7ba1ff;
+    --accent-soft: #1e2740;
+    --accent-on: #0b1220;
+
+    --third-party: #fbbf24;
+    --third-party-bg: #3b2c07;
+    --live: #4ade80;
+    --live-bg: #0b2e18;
+    --offline: #a5b4fc;
+    --offline-bg: #1e1b4b;
+    --danger: #f87171;
+
+    color-scheme: dark;
+  }
+}
+
+/* ---- Console surface: DARK always ------------------------------------- */
+
+.theme-console {
+  --bg: #0a0c10;
+  --surface: #12151b;
+  --surface-2: #1a1e26;
+  --text: #e8ebf0;
+  --text-dim: #8b94a3;
+  --rule: #2c333d;
+  --rule-soft: #222831;
+  --accent: #4d8dff;
+  --accent-soft: #14203a;
+  --accent-on: #06101f;
+
+  --third-party: #f59e0b;
+  --third-party-bg: #3b2708;
+  --live: #34d399;
+  --live-bg: #06281c;
+  --offline: #a5b4fc;
+  --offline-bg: #1e1b4b;
+  --danger: #f87171;
+
+  color-scheme: dark;
+}

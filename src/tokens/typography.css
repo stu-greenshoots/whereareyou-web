@@ -1,0 +1,82 @@
+/* ============================================================================
+   whereareyou — typography
+
+   One face for everything a human reads: Atkinson Hyperlegible. It carries
+   body, buttons, and labels alike. The reference build used a Georgia small-
+   caps serif for labels; that was explicitly abandoned — "it looked cheap and
+   dated rather than institutional". Labels are instead Atkinson Hyperlegible,
+   uppercase, letter-spaced: the institutional feel comes from restraint and
+   rhythm, not from a second typeface.
+
+   Codes are the exception, and the reason the mono exists: JetBrains Mono,
+   tabular, slashed zero, split 1/l.
+   ========================================================================= */
+
+:root {
+  /* ---- Families ------------------------------------------------------- */
+  --font-ui: 'Atkinson Hyperlegible', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Label face == UI face. Kept as its own token so a future change of heart
+     is a one-line edit, and so intent is legible at the call site. */
+  --font-label: var(--font-ui);
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+
+  /* ---- Type scale ----------------------------------------------------- */
+  /* Minimums are deliberate: nothing a frightened user must read drops below
+     14px, and the code itself is enormous. */
+  --text-2xs: 11px;   /* copy-row labels, badges */
+  --text-xs: 12px;    /* section labels, phonetic char cue */
+  --text-sm: 13px;    /* dim metadata, hints */
+  --text-base: 15px;  /* body copy, notes, coordinate values */
+  --text-md: 17px;    /* phonetic word — the spoken interface */
+  --text-lg: 20px;    /* primary button label */
+  --text-xl: 21px;    /* dispatcher code input */
+
+  /* The code. Fluid so it dominates any viewport without wrapping. */
+  --code-size: clamp(40px, 14vw, 58px);
+  /* Offline code is 2 chars longer; shrink slightly so it still never wraps. */
+  --code-size-offline: clamp(32px, 11vw, 48px);
+
+  /* ---- Weights -------------------------------------------------------- */
+  --weight-regular: 400;
+  --weight-medium: 600;   /* Atkinson has no 500/600 master; browser synthesises.
+                             Used for emphasis short of bold. */
+  --weight-semibold: 650;
+  --weight-bold: 700;
+
+  /* ---- Line heights --------------------------------------------------- */
+  --leading-none: 1;      /* the code */
+  --leading-tight: 1.2;   /* phonetic words, headings */
+  --leading-normal: 1.5;  /* body copy */
+
+  /* ---- Letter spacing ------------------------------------------------- */
+  --tracking-code: 0.04em;    /* code glyphs */
+  --tracking-label: 0.14em;   /* uppercase labels */
+  --tracking-brand: 0.18em;   /* wordmark */
+  --tracking-loose: 0.1em;
+}
+
+/* ---- Semantic type roles ------------------------------------------------
+   Utility classes consumers can apply directly; components reference the
+   tokens above rather than these classes. */
+
+.wa-label {
+  font-family: var(--font-label);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+}
+
+.wa-code {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums slashed-zero;
+  letter-spacing: var(--tracking-code);
+  white-space: nowrap;           /* a code must NEVER wrap mid-string */
+}
+
+.wa-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
