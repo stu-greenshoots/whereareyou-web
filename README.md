@@ -1,16 +1,14 @@
 # whereareyou-web
 
-**Share screen and dispatcher console for the
-[whereareyou](https://github.com/stu-greenshoots/whereareyou-protocol) location
-handover protocol.**
+**Share screen and look-up console for the
+whereareyou location handover protocol.**
 
 > ⚠️ Early prototype. Not connected to any emergency service — for a real
 > emergency, dial 999.
 
 ## Run it
 
-Needs [`whereareyou-api`](https://github.com/stu-greenshoots/whereareyou-api)
-running on `:8787`. The dev server proxies `/v1` to it.
+Needs the whereareyou resolver API running on `:8787`. The dev server proxies `/v1` to it.
 
 ```bash
 npm install

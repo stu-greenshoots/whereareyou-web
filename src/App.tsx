@@ -5,14 +5,21 @@ import { Resolve } from './Resolve.jsx';
 type Route = 'share' | 'lookup';
 
 /**
- * `/lookup` is the canonical path. `/resolve` is kept as an alias because codes
+ * Everything is resolved against Vite's BASE_URL rather than the site root,
+ * because GitHub Pages serves this from `/<repo>/`. Hardcoding `/lookup` would
+ * work locally and 404 in the only place real users see it.
+ */
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+/**
+ * `lookup` is the canonical path. `resolve` is kept as an alias because codes
  * already shared by the native share sheet carry that URL in their text, and a
  * link someone has read out or pasted must not stop working because we renamed
  * a screen.
  */
 function currentRoute(): Route {
-  const { pathname } = window.location;
-  return pathname.startsWith('/lookup') || pathname.startsWith('/resolve') ? 'lookup' : 'share';
+  const path = window.location.pathname.slice(BASE.length);
+  return path.startsWith('/lookup') || path.startsWith('/resolve') ? 'lookup' : 'share';
 }
 
 export function App() {
@@ -25,7 +32,7 @@ export function App() {
   }, []);
 
   const navigate = (next: Route) => {
-    window.history.pushState({}, '', next === 'lookup' ? '/lookup' : '/');
+    window.history.pushState({}, '', next === 'lookup' ? `${BASE}/lookup` : `${BASE}/`);
     setRoute(next);
   };
 

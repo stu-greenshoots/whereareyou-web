@@ -12,6 +12,14 @@ import { defineConfig } from 'vite';
  * it and geolocation works.
  */
 export default defineConfig({
+  /*
+   * GitHub Pages serves a project site from `/<repo>/`, not from the root, so
+   * every asset URL needs that prefix. Driven by an env var rather than
+   * hardcoded, so local dev and any root-hosted deploy keep `/` and only the
+   * Pages build sets it. Vite rewrites `/`-prefixed URLs in CSS and HTML with
+   * this value, which is what keeps the self-hosted @font-face paths working.
+   */
+  base: process.env['VITE_BASE'] ?? '/',
   plugins: [react(), basicSsl()],
   // `appType: 'spa'` is the default, and it already serves index.html for
   // unknown paths — so /resolve survives a reload with no extra config.
