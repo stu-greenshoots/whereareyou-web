@@ -1,0 +1,40 @@
+/* ============================================================================
+   whereareyou — @font-face declarations
+
+   Everything is self-hosted. No CDN, no external request — a hard requirement:
+   the public app must load on a cracked phone with one bar of signal, and the
+   console must run on an air-gapped control-room desk.
+
+   Atkinson Hyperlegible (Braille Institute, OFL) is the UI face. It was
+   engineered to disambiguate exactly the characters that get misread down a
+   phone line — 0/O, 1/I/l, 5/S. This whole product exists because characters
+   get misheard, so the typeface built against that problem is the right call.
+
+   JetBrains Mono (OFL) renders the codes. Slashed zero, unmistakable 1/l,
+   tabular by construction. Variable weight axis, one file.
+   ========================================================================= */
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/AtkinsonHyperlegible-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/AtkinsonHyperlegible-Bold.woff2') format('woff2');
+}
+
+/* Variable weight axis 100–800. Codes use 700; the slashed zero and split 1/l
+   hold at every weight. */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/JetBrainsMono-Variable.woff2') format('woff2');
+}

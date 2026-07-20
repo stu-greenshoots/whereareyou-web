@@ -135,10 +135,10 @@ export function Resolve() {
 
         <div className="parse-feedback">
           {parsed.kind === 'session' && (
-            <span className="parse-ok">Live code — reads as {formatCode(parsed.code)}</span>
+            <span className="parse-session">Live code — reads as {formatCode(parsed.code)}</span>
           )}
           {parsed.kind === 'offline' && (
-            <span className="parse-ok">
+            <span className="parse-offline">
               Offline code — reads as {formatOfflineCode(parsed.code)}, resolves without a server
             </span>
           )}

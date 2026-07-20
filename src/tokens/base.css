@@ -1,0 +1,32 @@
+/* ============================================================================
+   whereareyou — base reset & primitives
+
+   A minimal reset plus the two surface scopes. Applying a theme class to the
+   host element (usually <body>) switches the whole token set. The public app
+   uses .theme-public, the console .theme-console.
+   ========================================================================= */
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Links inherit the accent everywhere; never leave them browser-blue. */
+a { color: var(--accent); text-underline-offset: 3px; }
+a:hover { filter: brightness(1.12); }
+
+/* Selection uses the accent, tinted. */
+::selection { background: var(--accent-soft); color: var(--text); }
+
+/* Focus is never removed — see elevation.css rationale. */
+:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-offset); }

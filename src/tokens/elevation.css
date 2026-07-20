@@ -1,0 +1,61 @@
+/* ============================================================================
+   whereareyou — elevation, borders, radius, motion
+
+   This system barely uses shadow. Depth is carried by RULES and borders, not
+   drop shadows — the public surface is an "issued document", and documents are
+   flat, ruled things. The one place a shadow earns its keep is lifting a map
+   pin off the tiles so it is unmistakable.
+
+   Corners are nearly square (4px). Rounded, soft corners read as a consumer
+   app; this must not. The heavy 2px rule around the code document is the
+   single most identity-carrying shape in the system.
+   ========================================================================= */
+
+:root {
+  /* ---- Radius --------------------------------------------------------- */
+  --radius: 4px;         /* default — cards, buttons, inputs */
+  --radius-sm: 2px;      /* badges, tight chips */
+  --radius-pill: 999px;  /* the live dot only */
+
+  /* ---- Border widths -------------------------------------------------- */
+  --border-hair: 1px;    /* soft internal dividers (--rule-soft) */
+  --border-rule: 2px;    /* document rules, primary inputs (--rule) */
+  --border-flag: 4px;    /* notice left-rule — an annotation, not an alarm */
+  --border-flag-strong: 6px; /* third-party report — strongest treatment */
+
+  /* ---- Shadow --------------------------------------------------------- */
+  /* Used almost nowhere. The map pin, and nothing routine. */
+  --shadow-pin: 0 1px 6px #0007;
+  --shadow-none: none;
+
+  /* ---- Focus ---------------------------------------------------------- */
+  /* Never remove focus; safety-critical controls must show it. A thick outline
+     with offset survives a cracked screen and bright sun. */
+  --focus-ring: 2px solid var(--accent);
+  --focus-offset: 1px;
+
+  /* ---- Motion --------------------------------------------------------- */
+  /* Motion is minimal and calm — panic amplification is a real failure mode.
+     No bounces, no attention-grabbing sweeps. The live pulse is the only
+     ambient animation, and it is slow. */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);  /* @kind other */
+  --dur-fast: 120ms;      /* @kind other */
+  --dur-base: 200ms;      /* @kind other */
+  --pulse-period: 1.8s;   /* @kind other */ /* live-dot breath */
+}
+
+/* Live indicator — the one ambient motion in the system. Slow enough to read
+   as "alive and calm", never as "alarm". Honoured only when the user allows
+   motion. */
+@keyframes wa-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

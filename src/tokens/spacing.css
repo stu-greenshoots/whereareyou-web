@@ -1,0 +1,43 @@
+/* ============================================================================
+   whereareyou — spacing & layout
+
+   A calm, roomy public surface and a denser console share one spacing ramp.
+   The public app uses the larger end (breathing room reads as trustworthy and
+   reduces mis-taps by shaking hands); the console tightens up because an
+   operator scans it, not reads it.
+   ========================================================================= */
+
+:root {
+  /* ---- Spacing ramp --------------------------------------------------- */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 18px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-14: 28px;
+  --space-16: 32px;
+  --space-20: 40px;
+
+  /* ---- Semantic gaps -------------------------------------------------- */
+  --stack-gap: var(--space-10);        /* public vertical rhythm */
+  --stack-gap-dense: var(--space-6);   /* console vertical rhythm */
+  --row-gap: var(--space-5);
+  --pad-panel: var(--space-8) var(--space-9);
+  --pad-panel-dense: var(--space-6) var(--space-7);
+
+  /* ---- Touch targets -------------------------------------------------- */
+  /* The primary action is pressed one-handed, possibly in the dark, by shaking
+     hands. It is huge on purpose. */
+  --touch-primary: 88px;   /* minimum height of the hero button */
+  --touch-min: 44px;       /* minimum for any interactive target */
+
+  /* ---- Containers ----------------------------------------------------- */
+  --width-public: 560px;   /* single readable column on the share screen */
+  --width-console: 900px;  /* wider working area for the dispatcher */
+}
