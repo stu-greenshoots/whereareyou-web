@@ -30,9 +30,19 @@ interface OfflineResult {
   position: OfflinePosition;
 }
 
+/**
+ * A key baked into the build so the public demo works without every visitor
+ * having to be handed one. It is NOT a secret — it ships in a public bundle and
+ * everyone shares it, which means claim-on-read binds every look-up to the same
+ * identity and the anti-harvest property is effectively off. That is a
+ * deliberate demo trade, not how a real control room would be provisioned, and
+ * the field below stays visible and editable so the mechanism is legible.
+ */
+const DEMO_KEY = import.meta.env['VITE_DEMO_API_KEY'] ?? '';
+
 export function Resolve() {
   const [input, setInput] = useState('');
-  const [apiKey, setApiKey] = useState(() => sessionStorage.getItem('resolverKey') ?? '');
+  const [apiKey, setApiKey] = useState(() => sessionStorage.getItem('resolverKey') ?? DEMO_KEY);
   const [session, setSession] = useState<ResolvedWithWarning | null>(null);
   const [offline, setOffline] = useState<OfflineResult | null>(null);
   const [error, setError] = useState<string | null>(null);
