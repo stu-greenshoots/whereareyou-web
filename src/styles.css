@@ -50,12 +50,34 @@
   border: 0;
   padding: 0;
   cursor: pointer;
-  font-family: var(--font-label);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
   color: var(--text);
+}
+
+/* Locator-o wordmark. Lowercase so the pulse reads as an 'o'. */
+.brand-word {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-ui);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+/* The pulse standing in for the 'o' — accent-coloured so it draws the eye to
+   the mark inside the word. Sized to the lowercase x-height and nudged onto
+   the baseline. */
+.brand-o {
+  display: inline-flex;
+  color: var(--accent);
+  margin: 0 0.02em;
+}
+
+.pulse-glyph {
+  width: 0.72em;
+  height: 0.72em;
+  display: block;
+  transform: translateY(0.04em);
 }
 
 .nav { display: flex; gap: 18px; }

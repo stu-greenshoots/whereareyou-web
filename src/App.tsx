@@ -2,6 +2,17 @@ import { useEffect, useState } from 'react';
 import { Share } from './Share.jsx';
 import { Resolve } from './Resolve.jsx';
 
+/** The pulse locator, sized to stand in for the lowercase 'o' in the wordmark. */
+function PulseGlyph() {
+  return (
+    <svg className="pulse-glyph" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="44" fill="none" stroke="currentColor" strokeWidth="8" opacity="0.3" />
+      <circle cx="50" cy="50" r="29" fill="none" stroke="currentColor" strokeWidth="10" opacity="0.62" />
+      <circle cx="50" cy="50" r="14" fill="currentColor" />
+    </svg>
+  );
+}
+
 type Route = 'share' | 'lookup';
 
 /**
@@ -55,8 +66,12 @@ export function App() {
   return (
     <div className="app">
       <header className="header">
-        <button className="brand" onClick={() => navigate('share')}>
-          whereareyou
+        <button className="brand" onClick={() => navigate('share')} aria-label="whereareyou — home">
+          {/* Locator-o wordmark: the 'o' in "you" is the pulse mark, so the
+              logo and the app icon are literally the same object. */}
+          <span className="brand-word" aria-hidden="true">
+            wherearey<span className="brand-o"><PulseGlyph /></span>u
+          </span>
         </button>
         <nav className="nav">
           <button

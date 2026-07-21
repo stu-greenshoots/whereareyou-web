@@ -94,6 +94,14 @@ export function Share() {
     return () => clearInterval(timer);
   }, [phase.name]);
 
+  // When a code appears, jump back to the top — the button that minted it may
+  // be well down the page, and the code itself is the thing to read now.
+  useEffect(() => {
+    if (phase.name === 'shared' || phase.name === 'offline-shared') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [phase.name]);
+
   const locate = useCallback(() => {
     if (!('geolocation' in navigator)) {
       setPhase({
