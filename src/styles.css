@@ -569,6 +569,41 @@
 
 .map-frame { position: relative; }
 
+/* "Locate me" control — top-right, above Leaflet's panes, clear of the +/- zoom
+   buttons on the left. */
+.map-locate {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 700;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 1px 6px #0003;
+}
+.map-locate:hover:not(:disabled) { background: var(--surface-2); }
+.map-locate:disabled { cursor: default; opacity: 0.7; }
+.map-locate svg { width: 22px; height: 22px; }
+.map-locate svg.locating { animation: locate-spin 1s linear infinite; }
+@keyframes locate-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .map-locate svg.locating { animation: none; } }
+
+/* Accuracy of the current fix, shown before the sender commits to it. */
+.accuracy-readout {
+  margin: -6px 0 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Sits above Leaflet's tile (200) and marker (600) panes but clear of the
    attribution line, which stays visible. */
 .map-offline {

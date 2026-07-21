@@ -25,6 +25,10 @@ export interface MapProps {
   trail?: Array<[number, number]>;
   /** Tiles come from the network. When there is none, say so. */
   offline?: boolean;
+  /** When set, shows a "locate me" control that re-fetches the live position. */
+  onLocate?: () => void;
+  /** Whether a locate request is in flight — the control shows a busy state. */
+  locating?: boolean;
   className?: string;
 }
 
@@ -36,6 +40,8 @@ export function Map({
   onMove,
   trail,
   offline = false,
+  onLocate,
+  locating = false,
   className,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -171,6 +177,25 @@ export function Map({
   return (
     <div className="map-frame">
       <div ref={containerRef} className={className ?? 'map'} />
+      {onLocate !== undefined && (
+        <button
+          type="button"
+          className="map-locate"
+          onClick={onLocate}
+          disabled={locating}
+          aria-label="Move the pin to my current location"
+          title="Pin my current location"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" className={locating ? 'locating' : ''}>
+            <circle cx="12" cy="12" r="4" fill="currentColor" />
+            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.6" />
+          </svg>
+        </button>
+      )}
       {offline && (
         <p className="map-offline">
           Map pictures need a connection. Your position is still exact — it is written out below.

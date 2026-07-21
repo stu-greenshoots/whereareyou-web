@@ -5,7 +5,7 @@ import { mintSession, revokeSession, updatePosition } from './api.js';
 import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
 import { CopyRow } from './CopyRow.jsx';
-import { allFormats, inferSource, timeRemaining } from './formats.js';
+import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
 
 /** Why we ended up handing out a permanent code instead of a session. */
 type OfflineCause =
@@ -86,6 +86,8 @@ export function Share() {
   const [keepingOfflineCode, setKeepingOfflineCode] = useState(false);
   /** Set when "stop sharing" could not reach the server. */
   const [stopFailure, setStopFailure] = useState<string | null>(null);
+  /** A "locate me" fix is in flight. */
+  const [relocating, setRelocating] = useState(false);
 
   // Drive the expiry countdown.
   useEffect(() => {
@@ -136,6 +138,36 @@ export function Share() {
   const useManualPin = useCallback(() => {
     setThirdParty(true);
     setPhase({ name: 'located', position: { ...DEMO_POSITION, takenAt: new Date().toISOString() } });
+  }, []);
+
+  /**
+   * Re-fetch the live position and move the pin to it, without leaving the map.
+   *
+   * Two jobs: snap the pin back to where you actually are after dragging it,
+   * and let a first, coarse fix be replaced by a tighter one as GNSS settles —
+   * which is why the accuracy readout matters and why this exists next to it.
+   */
+  const relocate = useCallback(() => {
+    if (!('geolocation' in navigator)) return;
+    setRelocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (fix) => {
+        setRelocating(false);
+        setThirdParty(false);
+        setPhase({
+          name: 'located',
+          position: {
+            lat: fix.coords.latitude,
+            lon: fix.coords.longitude,
+            accuracyM: fix.coords.accuracy,
+            source: inferSource(fix.coords.accuracy),
+            takenAt: new Date(fix.timestamp).toISOString(),
+          },
+        });
+      },
+      () => setRelocating(false),
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+    );
   }, []);
 
   /**
@@ -325,6 +357,8 @@ export function Share() {
           accuracyM={position.accuracyM}
           thirdParty={thirdParty}
           offline={!online}
+          onLocate={relocate}
+          locating={relocating}
           onMove={(lat, lon) =>
             setPhase({
               name: 'located',
@@ -332,6 +366,14 @@ export function Share() {
             })
           }
         />
+
+        {/* Tell the sender how good the fix is before they commit to it. A ±40m
+            WiFi fix and a ±8m satellite fix are both usable, but the operator
+            should be told which — and the sender can tap "locate" to try for a
+            tighter one. */}
+        <p className="accuracy-readout">
+          {relocating ? 'Getting a fresh fix…' : describeSource(position.source, position.accuracyM)}
+        </p>
 
         <label className="toggle">
           <input
