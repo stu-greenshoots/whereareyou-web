@@ -581,17 +581,3 @@
    not compete with the pin. */
 .leaflet-control-attribution { font-size: 9px !important; opacity: 0.7; }
 
-/* Prototype disclaimer strip — pinned above everything, both surfaces.
-   Neutral rather than alarming: it's a statement of what this is, not a
-   warning. Prominent enough that neither a person nor a scanner can mistake
-   the app for an official emergency service. */
-.disclaimer {
-  padding: 8px 16px;
-  font-size: 12.5px;
-  line-height: 1.4;
-  text-align: center;
-  color: var(--text);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--rule-soft);
-}
-.disclaimer strong { font-weight: var(--weight-bold); }
