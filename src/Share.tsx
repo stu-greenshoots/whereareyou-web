@@ -50,6 +50,13 @@ const DEMO_POSITION: Position = {
   takenAt: new Date().toISOString(),
 };
 
+/** A satellite-grade fix. Stop refining once we reach it. */
+const ACCURACY_GOOD_M = 20;
+/** Below this quality, prompt the sender to try for a better fix. */
+const ACCURACY_POOR_M = 50;
+/** How long to keep refining a fix before settling for the best so far. */
+const ACQUIRE_MAX_MS = 20_000;
+
 function geolocationErrorMessage(error: GeolocationPositionError): {
   message: string;
   recoverable: boolean;
@@ -86,8 +93,11 @@ export function Share() {
   const [keepingOfflineCode, setKeepingOfflineCode] = useState(false);
   /** Set when "stop sharing" could not reach the server. */
   const [stopFailure, setStopFailure] = useState<string | null>(null);
-  /** A "locate me" fix is in flight. */
-  const [relocating, setRelocating] = useState(false);
+  /** A fix is being acquired/refined (initial locate, or the map's locate button). */
+  const [acquiring, setAcquiring] = useState(false);
+  const acquireWatchRef = useRef<number | null>(null);
+  const acquireTimerRef = useRef<number | null>(null);
+  const bestAccuracyRef = useRef<number>(Infinity);
 
   // Drive the expiry countdown.
   useEffect(() => {
@@ -104,71 +114,87 @@ export function Share() {
     }
   }, [phase.name]);
 
-  const locate = useCallback(() => {
-    if (!('geolocation' in navigator)) {
-      setPhase({
-        name: 'error',
-        message: 'This browser cannot provide a location. Place a pin manually instead.',
-        recoverable: true,
-      });
-      return;
-    }
-
-    setPhase({ name: 'locating' });
-    navigator.geolocation.getCurrentPosition(
-      (fix) => {
-        setPhase({
-          name: 'located',
-          position: {
-            lat: fix.coords.latitude,
-            lon: fix.coords.longitude,
-            accuracyM: fix.coords.accuracy,
-            // The browser never reports which sensor produced the fix, so this
-            // is inferred from the accuracy radius. See GNSS_ACCURACY_THRESHOLD_M.
-            source: inferSource(fix.coords.accuracy),
-            takenAt: new Date(fix.timestamp).toISOString(),
-          },
-        });
-      },
-      (error) => setPhase({ name: 'error', ...geolocationErrorMessage(error) }),
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
-    );
-  }, []);
-
-  const useManualPin = useCallback(() => {
-    setThirdParty(true);
-    setPhase({ name: 'located', position: { ...DEMO_POSITION, takenAt: new Date().toISOString() } });
+  const stopAcquire = useCallback(() => {
+    if (acquireWatchRef.current !== null) navigator.geolocation.clearWatch(acquireWatchRef.current);
+    if (acquireTimerRef.current !== null) window.clearTimeout(acquireTimerRef.current);
+    acquireWatchRef.current = null;
+    acquireTimerRef.current = null;
+    setAcquiring(false);
   }, []);
 
   /**
-   * Re-fetch the live position and move the pin to it, without leaving the map.
+   * Acquire a position and keep refining it until it is good enough.
    *
-   * Two jobs: snap the pin back to where you actually are after dragging it,
-   * and let a first, coarse fix be replaced by a tighter one as GNSS settles —
-   * which is why the accuracy readout matters and why this exists next to it.
+   * getCurrentPosition returns a single, usually coarse, first fix — the cell or
+   * WiFi guess the device has before the GNSS chip has locked. watchPosition
+   * streams updates as it settles, so we take each improvement and stop once the
+   * fix is satellite-grade (or a timeout hits). That is the difference between
+   * "±45m and stuck" and "watch it tighten to ±8m".
+   *
+   * `initial` distinguishes the first locate (idle → map) from the map's
+   * locate-again button, which refines in place without leaving the view.
    */
-  const relocate = useCallback(() => {
-    if (!('geolocation' in navigator)) return;
-    setRelocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (fix) => {
-        setRelocating(false);
-        setThirdParty(false);
-        setPhase({
-          name: 'located',
-          position: {
-            lat: fix.coords.latitude,
-            lon: fix.coords.longitude,
-            accuracyM: fix.coords.accuracy,
-            source: inferSource(fix.coords.accuracy),
-            takenAt: new Date(fix.timestamp).toISOString(),
-          },
-        });
-      },
-      () => setRelocating(false),
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
-    );
-  }, []);
+  const startAcquire = useCallback(
+    (initial: boolean) => {
+      if (!('geolocation' in navigator)) {
+        if (initial) {
+          setPhase({
+            name: 'error',
+            message: 'This browser cannot provide a location. Place a pin manually instead.',
+            recoverable: true,
+          });
+        }
+        return;
+      }
+      stopAcquire();
+      if (initial) setPhase({ name: 'locating' });
+      setAcquiring(true);
+      setThirdParty(false);
+      bestAccuracyRef.current = Infinity;
+
+      acquireWatchRef.current = navigator.geolocation.watchPosition(
+        (fix) => {
+          // Only accept an improvement, so a momentary worse reading never bumps
+          // the pin back outward.
+          if (fix.coords.accuracy > bestAccuracyRef.current) return;
+          bestAccuracyRef.current = fix.coords.accuracy;
+          setPhase({
+            name: 'located',
+            position: {
+              lat: fix.coords.latitude,
+              lon: fix.coords.longitude,
+              accuracyM: fix.coords.accuracy,
+              source: inferSource(fix.coords.accuracy),
+              takenAt: new Date(fix.timestamp).toISOString(),
+            },
+          });
+          if (fix.coords.accuracy <= ACCURACY_GOOD_M) stopAcquire();
+        },
+        (error) => {
+          stopAcquire();
+          // Only surface an error if we never got a usable fix at all.
+          if (initial && bestAccuracyRef.current === Infinity) {
+            setPhase({ name: 'error', ...geolocationErrorMessage(error) });
+          }
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: ACQUIRE_MAX_MS },
+      );
+      acquireTimerRef.current = window.setTimeout(stopAcquire, ACQUIRE_MAX_MS);
+    },
+    [stopAcquire],
+  );
+
+  const locate = useCallback(() => startAcquire(true), [startAcquire]);
+  const relocate = useCallback(() => startAcquire(false), [startAcquire]);
+
+  // Stop refining if the component goes away mid-acquire.
+  useEffect(() => stopAcquire, [stopAcquire]);
+
+  const useManualPin = useCallback(() => {
+    stopAcquire();
+    setThirdParty(true);
+    setPhase({ name: 'located', position: { ...DEMO_POSITION, takenAt: new Date().toISOString() } });
+  }, [stopAcquire]);
 
   /**
    * Hand the caller a permanent, self-contained code.
@@ -227,6 +253,7 @@ export function Share() {
 
   const share = useCallback(() => {
     if (phase.name !== 'located') return;
+    stopAcquire();
 
     // When the browser says the link is down it is telling the truth, and a
     // request that cannot succeed is not worth a frightened person's seconds.
@@ -235,7 +262,7 @@ export function Share() {
       return;
     }
     void mint(phase.position, null);
-  }, [phase, linkUp, mint, fallToOfflineCode]);
+  }, [phase, linkUp, mint, fallToOfflineCode, stopAcquire]);
 
   // Live mode: stream position updates until expiry or revocation.
   useEffect(() => {
@@ -358,22 +385,43 @@ export function Share() {
           thirdParty={thirdParty}
           offline={!online}
           onLocate={relocate}
-          locating={relocating}
-          onMove={(lat, lon) =>
+          locating={acquiring}
+          onMove={(lat, lon, accuracyM) => {
+            // A hand-placed pin is a deliberate choice, not a sensor guess — so
+            // its accuracy comes from how far the map is zoomed in, which the
+            // Map computes. Stop any GNSS refinement so it can't drag the pin
+            // back off the spot the caller just chose.
+            stopAcquire();
             setPhase({
               name: 'located',
-              position: { ...position, lat, lon, source: 'manual', takenAt: new Date().toISOString() },
-            })
-          }
+              position: { ...position, lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
+            });
+          }}
         />
 
         {/* Tell the sender how good the fix is before they commit to it. A ±40m
             WiFi fix and a ±8m satellite fix are both usable, but the operator
-            should be told which — and the sender can tap "locate" to try for a
-            tighter one. */}
+            should be told which. */}
         <p className="accuracy-readout">
-          {relocating ? 'Getting a fresh fix…' : describeSource(position.source, position.accuracyM)}
+          {acquiring
+            ? `Improving the fix… ±${Math.round(position.accuracyM)}m so far`
+            : describeSource(position.source, position.accuracyM)}
         </p>
+
+        {/* A GNSS fix that settled poor. Manual pins are excluded — they are as
+            precise as the placement, and re-locating would move them. */}
+        {!acquiring && position.source !== 'manual' && position.accuracyM > ACCURACY_POOR_M && (
+          <div className="notice notice-warn">
+            <p>
+              This fix is only accurate to about ±{Math.round(position.accuracyM)}m. On a phone,
+              move to open sky or near a window and try again. On a laptop it's WiFi-based and
+              won't get much tighter — a phone outdoors is far more precise.
+            </p>
+            <button className="link-button" onClick={relocate}>
+              Try for a better fix
+            </button>
+          </div>
+        )}
 
         <label className="toggle">
           <input

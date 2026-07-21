@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 
+/**
+ * Accuracy of a hand-placed pin, from the map's zoom.
+ *
+ * Unlike a GNSS fix, a placed pin has no sensor uncertainty — its precision is
+ * just how finely the caller could point, which is set by how far the map is
+ * zoomed in. A pin dropped at street level is a few metres; one dropped while
+ * zoomed out is honestly coarser. Clamped so it never claims sub-grid precision
+ * or an absurdly large radius.
+ */
+function placementAccuracy(lat: number, zoom: number): number {
+  const metresPerPixel = (40075016.686 * Math.cos((lat * Math.PI) / 180)) / 2 ** (zoom + 8);
+  const TOLERANCE_PX = 6; // how close a human can realistically tap
+  return Math.round(Math.min(300, Math.max(3, metresPerPixel * TOLERANCE_PX)));
+}
+
 // Leaflet's default marker icons are resolved relative to the CSS, which breaks
 // under a bundler. Draw our own instead — also lets a third-party report look
 // visually different from a self-report, which matters (see below).
@@ -19,8 +34,12 @@ export interface MapProps {
   accuracyM: number;
   /** Third-party reports are drawn differently — see note below. */
   thirdParty?: boolean;
-  /** When set, the pin can be dragged and this fires with the new position. */
-  onMove?: (lat: number, lon: number) => void;
+  /**
+   * When set, the pin can be dragged/placed and this fires with the new
+   * position plus a placement accuracy derived from the current map zoom — a
+   * hand-placed pin is only as precise as how far in the map is zoomed.
+   */
+  onMove?: (lat: number, lon: number, accuracyM: number) => void;
   /** Previous positions of a live session, oldest first. */
   trail?: Array<[number, number]>;
   /** Tiles come from the network. When there is none, say so. */
@@ -114,7 +133,7 @@ export function Map({
 
       marker.on('dragend', (event) => {
         const { lat: newLat, lng } = (event.target as L.Marker).getLatLng();
-        onMoveRef.current?.(newLat, lng);
+        onMoveRef.current?.(newLat, lng, placementAccuracy(newLat, map.getZoom()));
       });
 
       markerRef.current = marker;
@@ -162,7 +181,7 @@ export function Map({
     if (map === null || onMove === undefined) return;
 
     const handler = (event: L.LeafletMouseEvent) => {
-      onMoveRef.current?.(event.latlng.lat, event.latlng.lng);
+      onMoveRef.current?.(event.latlng.lat, event.latlng.lng, placementAccuracy(event.latlng.lat, map.getZoom()));
     };
     map.on('click', handler);
     return () => {
