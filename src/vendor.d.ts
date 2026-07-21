@@ -1,3 +1,4 @@
+/// <reference types="vite-plugin-pwa/client" />
 /**
  * Minimal ambient declarations for two geo libraries that ship no types.
  *
