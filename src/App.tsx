@@ -54,6 +54,16 @@ export function App() {
 
   return (
     <div className="app">
+      {/* Unmissable on first paint, and deliberately so. This is an independent
+          proof-of-concept; it must never be mistaken for an official emergency
+          service — by a person, or by an automated safe-browsing scanner that
+          would otherwise read the emergency framing as impersonation. */}
+      <div className="disclaimer" role="note">
+        <strong>Prototype / proof-of-concept.</strong> Independent demo, not a
+        real emergency service and not affiliated with 999 or any emergency
+        provider. In a real emergency, dial&nbsp;999.
+      </div>
+
       <header className="header">
         <button className="brand" onClick={() => navigate('share')}>
           whereareyou

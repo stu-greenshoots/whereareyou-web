@@ -4,14 +4,22 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <title>whereareyou</title>
+    <title>whereareyou — location-code prototype (demo, not an emergency service)</title>
     <meta
       name="description"
-      content="Share your exact location with an emergency operator using a short spoken code."
+      content="Independent open-source proof-of-concept exploring short spoken location codes. A technology demo, not a real emergency service and not affiliated with 999 or any emergency provider."
     />
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Visible in the raw HTML for any scanner that does not execute JavaScript:
+         this is a demo, not an official emergency service. -->
+    <div id="root">
+      <noscript>
+        whereareyou is an independent proof-of-concept demo. It is not a real
+        emergency service and is not affiliated with 999 or any emergency
+        provider. In a real emergency, dial 999.
+      </noscript>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

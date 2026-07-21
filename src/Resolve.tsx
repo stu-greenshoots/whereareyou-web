@@ -195,21 +195,32 @@ export function Resolve() {
         </section>
       )}
 
-      <details className="panel">
-        <summary className="panel-title">Look-up settings</summary>
-        <label className="field-label" htmlFor="api-key">
-          API key
-        </label>
-        <input
-          id="api-key"
-          className="note-input"
-          value={apiKey}
-          onChange={(event) => saveKey(event.target.value)}
-          placeholder="Leave blank if the resolver is in open mode"
-          autoComplete="off"
-        />
-        <p className="panel-hint">Kept in this tab's session storage only.</p>
-      </details>
+      {/* The key input only exists when this build has NO baked-in demo key —
+          i.e. someone self-hosting against their own resolver. On the public
+          demo the key is already provided, so the field is redundant, and a
+          credential-shaped input on an emergency-framed page is exactly what a
+          safe-browsing scanner misreads as phishing. So it is not rendered at
+          all in the demo build rather than merely hidden. */}
+      {DEMO_KEY === '' && (
+        <details className="panel">
+          <summary className="panel-title">Resolver connection (self-hosting)</summary>
+          <label className="field-label" htmlFor="api-key">
+            Resolver key
+          </label>
+          <input
+            id="api-key"
+            className="note-input"
+            value={apiKey}
+            onChange={(event) => saveKey(event.target.value)}
+            placeholder="Leave blank if the resolver is in open mode"
+            autoComplete="off"
+          />
+          <p className="panel-hint">
+            Only needed when pointing this at your own resolver. Kept in this
+            tab's session storage.
+          </p>
+        </details>
+      )}
     </div>
   );
 }
