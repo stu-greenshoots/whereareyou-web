@@ -6,6 +6,7 @@ import {
   type OfflinePosition,
 } from '@whereareyou/protocol';
 import { resolveSession, type ResolvedWithWarning } from './api.js';
+import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, timeRemaining } from './formats.js';
@@ -50,6 +51,10 @@ export function Resolve() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [, forceTick] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Tiles are the only thing on this screen that needs the network. Without
+  // this, a dispatcher offline sees an unexplained grey box where the map
+  // should be — the Share screen already threads connectivity into its <Map>.
+  const { online } = useConnectivity();
 
   useEffect(() => inputRef.current?.focus(), []);
 
@@ -167,9 +172,9 @@ export function Resolve() {
 
       {error !== null && <div className="notice notice-warn">{error}</div>}
 
-      {session !== null && <SessionView session={session} />}
+      {session !== null && <SessionView session={session} offline={!online} />}
 
-      {offline !== null && <OfflineView result={offline} />}
+      {offline !== null && <OfflineView result={offline} offline={!online} />}
 
       {history.length > 0 && (
         <section className="panel">
@@ -235,7 +240,7 @@ export function Resolve() {
  * whiteboard. Presenting the two identically would invite a dispatcher to
  * assume a freshness that is not there.
  */
-function OfflineView({ result }: { result: OfflineResult }) {
+function OfflineView({ result, offline }: { result: OfflineResult; offline: boolean }) {
   const { position } = result;
   const formats = allFormats(position.lat, position.lon);
   const cellSize = Math.max(1, Math.round(position.cellSizeM));
@@ -250,7 +255,7 @@ function OfflineView({ result }: { result: OfflineResult }) {
         </span>
       </div>
 
-      <Map lat={position.lat} lon={position.lon} accuracyM={position.cellSizeM} />
+      <Map lat={position.lat} lon={position.lon} accuracyM={position.cellSizeM} offline={offline} />
 
       <section className="panel">
         <h2 className="panel-title">Location</h2>
@@ -269,7 +274,7 @@ function OfflineView({ result }: { result: OfflineResult }) {
   );
 }
 
-function SessionView({ session }: { session: ResolvedWithWarning }) {
+function SessionView({ session, offline }: { session: ResolvedWithWarning; offline: boolean }) {
   const { position } = session;
   const formats = allFormats(position.lat, position.lon);
   const thirdParty = session.subject === 'third-party';
@@ -297,6 +302,7 @@ function SessionView({ session }: { session: ResolvedWithWarning }) {
         lon={position.lon}
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
+        offline={offline}
       />
 
       <section className="panel">

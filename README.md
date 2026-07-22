@@ -86,8 +86,9 @@ about their own privacy, told by us.
 not whether anything is reachable, and it is wrong constantly — captive-portal
 wifi being the everyday case. It is trusted in one direction only (when it says
 "offline" the link really is down); otherwise the answer comes from requests
-that were actually made, plus a probe of the resolver while we believe we are
-offline.
+that were actually made, plus a background probe of the resolver that runs
+whenever reachability is still unproven — which is what decides the
+captive-portal case the browser cannot.
 
 **Coming back online never swaps the code underneath the caller.** By then they
 may have read the offline code down the phone. A session code is *offered*, and
@@ -96,7 +97,7 @@ still works and still never expires.
 
 ## Known gaps
 
-Not yet a PWA (no offline app shell), and no SSE subscription for live sessions.
+No SSE subscription for live sessions yet.
 
 ## Licence
 

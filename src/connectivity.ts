@@ -73,17 +73,28 @@ export function useConnectivity(): Connectivity {
   // says about the link. Otherwise fall back to the link, optimistically.
   const online = verified === 'reachable' || (linkUp && verified === 'unknown');
 
-  // While we believe we are offline, keep testing. Recovery often arrives with
-  // no `online` event at all — walking out of a lift, a captive portal finally
-  // being signed into — so waiting for one would leave the caller stranded on a
-  // permanent code they did not need.
+  // Keep probing the resolver until a request has genuinely reached it. This
+  // covers two states the browser cannot tell apart, and `navigator.onLine` is
+  // useless in both:
+  //   - we believe we are offline, waiting to recover — the `online` event
+  //     often never fires (walking out of a lift, finally signing into a
+  //     captive portal), so waiting for one would strand the caller on a
+  //     permanent code they did not need;
+  //   - we are optimistically "online" but unproven (`verified === 'unknown'`)
+  //     — the link is up but may carry no route out, the captive-portal case,
+  //     which only a real request can detect.
+  // A successful probe promotes us to proven-reachable; a failed one records
+  // the unreachability, so a silent network death (no `offline` event) downgrades
+  // us instead of leaving the app believing it is connected. A real mint still
+  // outranks either (see the report* callbacks). We stop probing only once
+  // genuinely proven reachable.
   useEffect(() => {
-    if (online) return;
+    if (verified === 'reachable') return;
 
     let cancelled = false;
     const check = async () => {
       const reachable = await probeResolver();
-      if (!cancelled && reachable) setVerified('reachable');
+      if (!cancelled) setVerified(reachable ? 'reachable' : 'unreachable');
     };
 
     void check();
@@ -92,7 +103,7 @@ export function useConnectivity(): Connectivity {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [online]);
+  }, [verified]);
 
   return { online, linkUp, reportUnreachable, reportReachable };
 }
