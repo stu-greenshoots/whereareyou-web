@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  decodeSketch,
   formatCode,
   formatOfflineCode,
   interpretCode,
@@ -280,6 +281,15 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
   const thirdParty = session.subject === 'third-party';
   const remaining = timeRemaining(session.expiresAt);
 
+  // Decoded defensively: null means a malformed payload, and the right
+  // response is to render the position without the drawing, not to blank the
+  // screen. A dispatcher losing the position because a sketch failed to parse
+  // would be a bad trade.
+  const sketch = useMemo(
+    () => (session.sketch !== undefined ? decodeSketch(session.sketch) : null),
+    [session.sketch],
+  );
+
   const cadLine = `${formats.latLon} (±${Math.round(position.accuracyM)}m, ${position.source})${
     formats.osGridRef !== null ? ` [${formats.osGridRef}]` : ''
   }`;
@@ -303,7 +313,16 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
         offline={offline}
+        sketch={sketch}
+        fitSketch
       />
+
+      {sketch !== null && (
+        <p className="sketch-provenance">
+          <strong>The caller drew this.</strong> It is their sketch of the scene, not survey
+          data, and the colours carry no meaning.
+        </p>
+      )}
 
       <section className="panel">
         <div className="fix-summary">

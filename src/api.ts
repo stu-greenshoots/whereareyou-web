@@ -84,6 +84,8 @@ export interface MintOptions {
   subject: SessionSubject;
   note?: string;
   ttlSeconds?: number;
+  /** Encoded sketch (see the protocol's sketch codec). Opaque to the server. */
+  sketch?: string;
 }
 
 export function mintSession(options: MintOptions): Promise<ApiResult<CreateSessionResponse>> {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { encodeOffline, formatCode, formatOfflineCode, phoneticFor } from '@whereareyou/protocol';
-import type { CreateSessionResponse, Position, SessionMode } from '@whereareyou/protocol';
+import { encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor } from '@whereareyou/protocol';
+import type { CreateSessionResponse, Position, SessionMode, Sketch } from '@whereareyou/protocol';
 import { mintSession, revokeSession, updatePosition } from './api.js';
 import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
@@ -50,6 +50,15 @@ const DEMO_POSITION: Position = {
   takenAt: new Date().toISOString(),
 };
 
+/**
+ * The drawing-toolbar chrome under trial (build plan D1): ?tools=toggle for
+ * the collapsed pencil, anything else for the always-visible palette. A
+ * dev-only switch — the losing variant and this param get deleted after the
+ * phone trial.
+ */
+const TOOLBAR_VARIANT: 'palette' | 'toggle' =
+  new URLSearchParams(window.location.search).get('tools') === 'toggle' ? 'toggle' : 'palette';
+
 /** A satellite-grade fix. Stop refining once we reach it. */
 const ACCURACY_GOOD_M = 20;
 /** Below this quality, prompt the sender to try for a better fix. */
@@ -85,6 +94,8 @@ export function Share() {
   const [thirdParty, setThirdParty] = useState(false);
   const [mode, setMode] = useState<SessionMode>('static');
   const [note, setNote] = useState('');
+  /** The caller's drawing. Anchored at the pin when the first shape lands. */
+  const [sketch, setSketch] = useState<Sketch | null>(null);
   const [, forceTick] = useState(0);
   const watchRef = useRef<number | null>(null);
   const { online, linkUp, reportReachable, reportUnreachable } = useConnectivity();
@@ -221,11 +232,23 @@ export function Share() {
     async (position: Position, spokenOfflineCode: string | null) => {
       setPhase({ name: 'minting', position, spokenOfflineCode });
 
+      // The drawing rides the mint, but must never cost it: if encoding
+      // fails for any reason the session is minted without the sketch.
+      let sketchPayload: string | undefined;
+      if (sketch !== null && sketch.shapes.length > 0) {
+        try {
+          sketchPayload = encodeSketch(sketch);
+        } catch {
+          sketchPayload = undefined;
+        }
+      }
+
       const result = await mintSession({
         position,
         mode,
         subject: thirdParty ? 'third-party' : 'self',
         ...(note.trim() !== '' ? { note: note.trim() } : {}),
+        ...(sketchPayload !== undefined ? { sketch: sketchPayload } : {}),
       });
 
       if (!result.ok) {
@@ -248,7 +271,7 @@ export function Share() {
       reportReachable();
       setPhase({ name: 'shared', position, session: result.data, spokenOfflineCode });
     },
-    [mode, thirdParty, note, fallToOfflineCode, reportReachable, reportUnreachable],
+    [mode, thirdParty, note, sketch, fallToOfflineCode, reportReachable, reportUnreachable],
   );
 
   const share = useCallback(() => {
@@ -295,6 +318,7 @@ export function Share() {
   const startAgain = useCallback(() => {
     setStopFailure(null);
     setKeepingOfflineCode(false);
+    setSketch(null);
     setPhase({ name: 'idle' });
   }, []);
 
@@ -386,6 +410,9 @@ export function Share() {
           offline={!online}
           onLocate={relocate}
           locating={acquiring}
+          sketch={sketch}
+          onSketchChange={setSketch}
+          toolbarVariant={TOOLBAR_VARIANT}
           onMove={(lat, lon, accuracyM) => {
             // A hand-placed pin is a deliberate choice, not a sensor guess — so
             // its accuracy comes from how far the map is zoomed in, which the
@@ -407,6 +434,16 @@ export function Share() {
             ? `Improving the fix… ±${Math.round(position.accuracyM)}m so far`
             : describeSource(position.source, position.accuracyM)}
         </p>
+
+        {!online && sketch !== null && sketch.shapes.length > 0 && (
+          <div className="notice notice-offline">
+            <strong>Your drawing stays on this phone.</strong>
+            <span>
+              An offline code carries a position and nothing else — there is no server to hold the
+              drawing. Describe it out loud instead, or get an expiring code when you have signal.
+            </span>
+          </div>
+        )}
 
         {/* A GNSS fix that settled poor. Manual pins are excluded — they are as
             precise as the placement, and re-locating would move them. */}
@@ -478,6 +515,7 @@ export function Share() {
       <OfflineShared
         phase={phase}
         formats={formats}
+        sketch={sketch}
         thirdParty={thirdParty}
         liveWanted={mode === 'live'}
         online={online}
@@ -582,6 +620,8 @@ export function Share() {
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
         offline={!online}
+        sketch={sketch}
+        fitSketch
       />
 
       <CoordinatePanel formats={formats} position={position} />
@@ -601,6 +641,7 @@ export function Share() {
 function OfflineShared({
   phase,
   formats,
+  sketch,
   thirdParty,
   liveWanted,
   online,
@@ -612,6 +653,7 @@ function OfflineShared({
 }: {
   phase: Extract<Phase, { name: 'offline-shared' }>;
   formats: ReturnType<typeof allFormats>;
+  sketch: Sketch | null;
   thirdParty: boolean;
   liveWanted: boolean;
   online: boolean;
@@ -640,6 +682,16 @@ function OfflineShared({
           </div>
         </div>
       </div>
+
+      {sketch !== null && sketch.shapes.length > 0 && (
+        <div className="notice notice-offline">
+          <strong>Your drawing stays on this phone.</strong>
+          <span>
+            An offline code carries a position and nothing else — there is no server to hold the
+            drawing. Describe it out loud instead, or get an expiring code when you have signal.
+          </span>
+        </div>
+      )}
 
       <div className="notice notice-offline">
         <strong>This code never expires and cannot be stopped.</strong>
@@ -712,6 +764,8 @@ function OfflineShared({
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
         offline={!online}
+        sketch={sketch}
+        fitSketch
       />
 
       <CoordinatePanel formats={formats} position={position} omitOfflineCode />

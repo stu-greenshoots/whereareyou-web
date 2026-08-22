@@ -638,3 +638,98 @@
    not compete with the pin. */
 .leaflet-control-attribution { font-size: 9px !important; opacity: 0.7; }
 
+
+/* Drawing toolbar — bottom-left, clear of the zoom control (top-left) and the
+   locate button (top-right). Same surface conventions as .map-locate. Touch
+   targets at 44px: used outdoors, one-handed, possibly in the rain. */
+.map-tools {
+  position: absolute;
+  left: 10px;
+  bottom: 24px;
+  z-index: 700;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 20px);
+  padding: 4px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 6px #0003;
+}
+/* The offline notice occupies the bottom strip; step over it. */
+.map-tools.map-tools-raised { bottom: 96px; }
+.map-tool {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+.map-tool svg { width: 22px; height: 22px; }
+.map-tool:disabled { opacity: 0.35; cursor: default; }
+.map-tool-active { background: var(--accent); color: #fff; }
+
+/* Ink swatches. The swatch is smaller than the finger target on purpose. */
+.map-ink {
+  position: relative;
+  width: 36px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.map-ink::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px var(--rule-soft);
+}
+.map-ink-active::after { box-shadow: 0 0 0 2px var(--accent); }
+
+.map-tools-rule {
+  width: 1px;
+  height: 28px;
+  margin: 0 2px;
+  background: var(--rule-soft);
+}
+
+/* "Sketch is full" — sits just above the toolbar, same surface. */
+.map-tools-note {
+  position: absolute;
+  left: 10px;
+  bottom: 130px;
+  z-index: 700;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: 0 1px 6px #0003;
+}
+.map-tools-note.map-tools-raised { bottom: 200px; }
+
+/* Console: what a drawing is, and what it is not. */
+.sketch-provenance {
+  margin: -6px 0 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.sketch-provenance strong { color: var(--text); }
