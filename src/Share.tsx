@@ -11,6 +11,7 @@ import { OpenInMaps } from './OpenInMaps.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap } from './SessionMap.jsx';
 import { connectLive, newLiveId } from './live.js';
+import { NotifyControl } from './Notify.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
 
@@ -1157,6 +1158,10 @@ export function Share() {
           {mode === 'live' ? 'Open the live map' : 'Make this a live session'}
         </button>
       )}
+
+      {/* Quiet, tap-only: no permission prompt until asked, and nothing at
+          all on platforms that cannot deliver a push. */}
+      {!expired && online && <NotifyControl code={session.code} variant="document" />}
 
       <SaveMapButton
         suggestedName={shareName.trim() !== '' ? shareName.trim() : note.trim()}

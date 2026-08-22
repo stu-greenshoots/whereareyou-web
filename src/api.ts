@@ -135,6 +135,46 @@ export function updatePosition(
   });
 }
 
+/**
+ * Extend a running session. The server clamps so the cumulative lifetime
+ * (createdAt → expiresAt) never exceeds 24h — at the cap, `expiresAt` comes
+ * back unchanged. Callers read the response, never assume.
+ */
+export function extendSession(
+  code: string,
+  updateToken: string,
+  addMinutes: number,
+): Promise<ApiResult<{ expiresAt: string }>> {
+  return request<{ expiresAt: string }>(`/v1/sessions/${encodeURIComponent(code)}/extend`, {
+    method: 'POST',
+    body: JSON.stringify({ updateToken, addMinutes }),
+  });
+}
+
+/**
+ * The VAPID public key for pushManager.subscribe(). A 404 means this
+ * deployment has no push keypair — "push unavailable", not an error.
+ */
+export function getPushConfig(): Promise<ApiResult<{ vapidPublicKey: string }>> {
+  return request<{ vapidPublicKey: string }>('/v1/push/config');
+}
+
+/**
+ * Attach this device's push subscription to a session. No updateToken:
+ * holding the code grants a subscription, same POC posture as joining the
+ * live room. The subscription's endpoint identifies this device — it goes
+ * to the resolver and nowhere else, and is never logged.
+ */
+export function registerPushSubscription(
+  code: string,
+  subscription: unknown,
+): Promise<ApiResult<void>> {
+  return request<void>(`/v1/sessions/${encodeURIComponent(code)}/push`, {
+    method: 'POST',
+    body: JSON.stringify({ subscription }),
+  });
+}
+
 export function revokeSession(code: string, updateToken: string): Promise<ApiResult<void>> {
   return request<void>(`/v1/sessions/${encodeURIComponent(code)}`, {
     method: 'DELETE',

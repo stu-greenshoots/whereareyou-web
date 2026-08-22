@@ -34,6 +34,7 @@ import {
   type PlacedMarker,
   type TileVariant,
 } from './Map.jsx';
+import { NotifyControl } from './Notify.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { inferSource, timeRemaining } from './formats.js';
@@ -817,6 +818,9 @@ export function SessionMap({
                 </button>
               </div>
               <div className="live-bar-actions">
+                {/* Gated on the socket, not navigator.onLine: a room we can
+                    reach is the only honest proof the subscribe can land. */}
+                {connected && ended === null && <NotifyControl code={code} variant="live" />}
                 <button
                   type="button"
                   className="button live-chat-button"

@@ -36,34 +36,25 @@ export default defineConfig({
     VitePWA({
       // Auto-update rather than prompt: a fast-moving prototype should never
       // strand a user on a stale build, and there is no in-app update UI.
+      // (skipWaiting/clientsClaim now live in src/sw.ts itself.)
       registerType: 'autoUpdate',
       // The manifest is already hand-authored in public/ and linked from
       // index.html — let the plugin own only the service worker so there is one
       // source of truth for each.
       manifest: false,
-      workbox: {
+      // Hand-authored worker: generateSW cannot express a push handler, so
+      // the shell precache, navigation fallback and tile cache moved into
+      // src/sw.ts as code. The plugin still injects the precache manifest.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      injectManifest: {
         // Precache the built shell + the static assets copied from public/.
         globPatterns: ['**/*.{js,css,html,woff2,png,svg,webmanifest}'],
-        // Any route resolves to the app shell offline, so /lookup works too.
-        navigateFallback: 'index.html',
-        // API calls must never be cached — offline, a failed mint is what
-        // triggers the offline-code fallback, which is the correct behaviour.
-        navigateFallbackDenylist: [/^\/v1\//, /^\/health/],
-        runtimeCaching: [
-          {
-            // Map tiles are the one thing that genuinely needs the network.
-            // Cache what has actually been viewed (never pre-fetch — the tile
-            // policies forbid it), so a map seen before losing signal keeps
-            // its tiles. Must match TILE_SOURCES in src/Map.tsx.
-            urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*/,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'carto-tiles',
-              expiration: { maxEntries: 250, maxAgeSeconds: 7 * 24 * 60 * 60 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-        ],
+        // iOS launch screens are fetched by the OS at install time, not by
+        // the app — precaching megabytes of splash PNGs would bloat every
+        // other platform's cache for nothing.
+        globIgnores: ['splash/**'],
       },
       devOptions: { enabled: false },
     }),

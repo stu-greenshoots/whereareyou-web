@@ -1700,3 +1700,30 @@ body.map-first .header { display: none; }
 /* The marker edit sheet's action row. */
 .marker-edit-row { align-items: center; }
 .marker-edit-row .open-in-maps { align-self: center; }
+
+/* ---- Notifications (web push) ------------------------------------------ */
+
+/* Code screen: a quiet text affordance, never a competing button. */
+.notify-row { display: flex; }
+.notify-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Live bar: the bell. Accent fill once armed — blue is the action colour;
+   green stays reserved for "live" and nothing else. */
+.live-chat-button.notify-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  opacity: 1;
+}
+
+/* A short status line that wraps under the live bar's controls. */
+.live-bar-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
