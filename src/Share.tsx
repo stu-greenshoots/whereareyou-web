@@ -9,7 +9,8 @@ import { useSharedConnectivity } from './connectivity.js';
 import { Map, MarkerIconPicker } from './Map.jsx';
 import { OpenInMaps } from './OpenInMaps.jsx';
 import { Brand } from './Brand.jsx';
-import { SessionMap } from './SessionMap.jsx';
+import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
+import { loadActiveShare, persistActiveShare, type ActiveShare } from './local-session.js';
 import { connectLive, newLiveId } from './live.js';
 import { NotifyControl } from './Notify.jsx';
 import { CopyRow } from './CopyRow.jsx';
@@ -110,27 +111,9 @@ interface PastShare {
   at: number;
 }
 
-/**
- * The one session this device currently has running, so a reload — or a trip
- * to another app — can come BACK to it as the owner instead of rejoining
- * their own room as a stranger. Cleared on revoke; ignored once expired.
- */
-interface ActiveShare {
-  code: string;
-  updateToken: string;
-  expiresAt: string;
-  mode: SessionMode;
-  position: Position;
-  /** The owner's drawing, encoded — restored on resume so a reload never
-      quietly loses what was drawn against a still-live code. */
-  sketch: string | null;
-  /** LEGACY single-marker mirror of markers[0] — kept so an entry written by
-      an older build still restores, and written on save for the same reason. */
-  marker: Position | null;
-  markerIcon: MarkerIcon;
-  /** All placed markers. The source of truth since live v2. */
-  markers?: SessionMarker[];
-}
+/* The ActiveShare record and its load/persist moved to local-session.ts:
+   the look-up screen's self-rejoin guard needs to ask "is this code mine?"
+   without importing this whole screen. */
 
 /** The marker list of a stored share, however old the entry. */
 function activeShareMarkers(entry: ActiveShare): SessionMarker[] {
@@ -138,28 +121,6 @@ function activeShareMarkers(entry: ActiveShare): SessionMarker[] {
   return entry.marker !== null && entry.marker !== undefined
     ? [{ id: newLiveId(), position: entry.marker, icon: entry.markerIcon ?? 'spot' }]
     : [];
-}
-
-const ACTIVE_KEY = 'activeShare';
-
-function loadActiveShare(): ActiveShare | null {
-  try {
-    const raw = localStorage.getItem(ACTIVE_KEY);
-    if (raw === null) return null;
-    const parsed = JSON.parse(raw) as ActiveShare;
-    return typeof parsed.code === 'string' && typeof parsed.updateToken === 'string' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistActiveShare(entry: ActiveShare | null): void {
-  try {
-    if (entry === null) localStorage.removeItem(ACTIVE_KEY);
-    else localStorage.setItem(ACTIVE_KEY, JSON.stringify(entry));
-  } catch {
-    // Convenience only.
-  }
 }
 
 const HISTORY_KEY = 'shareHistory';
@@ -289,6 +250,11 @@ export function Share() {
 
   /** Set when the caller has declined the offer of an expiring code. */
   const [keepingOfflineCode, setKeepingOfflineCode] = useState(false);
+  /** Quiet explanation shown after the look-up screen bounced our own code
+      back here (the self-rejoin guard) — cleared on any fresh start. */
+  const [ownCodeNote, setOwnCodeNote] = useState<string | null>(null);
+  /** Panel a push deep link asked the live map to open, consumed once. */
+  const [pendingPanel, setPendingPanel] = useState<LivePanel | null>(null);
   /** An extend request is in flight. */
   const [extendBusy, setExtendBusy] = useState(false);
   /** Outcome worth telling the owner about (the 24h cap, a failure). */
@@ -391,6 +357,47 @@ export function Share() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [phase.name]);
+
+  // A redirect from the look-up screen: the code entered there is OUR OWN
+  // running share (the self-rejoin guard), so resume the owner screen
+  // directly instead of joining our own room as a stranger. A push deep
+  // link's fragment names a live panel — open the live map straight onto it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const resume = params.get('resume');
+    if (resume === null) return;
+    const panel = panelFromFragment(window.location.hash);
+    // Consumed either way — a reload must not replay a spent request.
+    window.history.replaceState({}, '', import.meta.env.BASE_URL);
+    const entry = loadActiveShare();
+    if (entry === null || entry.code !== resume || timeRemaining(entry.expiresAt) === 'expired') {
+      return; // Not ours any more — the ordinary start screen is the truth.
+    }
+    setMode(entry.mode);
+    setSketch(entry.sketch !== null ? decodeSketch(entry.sketch) : null);
+    setMarkers(activeShareMarkers(entry));
+    setOwnCodeNote(
+      'That code is yours, so you are back on its owner screen — you never need to join your own session.',
+    );
+    setPhase({
+      name: 'shared',
+      position: entry.position,
+      session: {
+        code: entry.code,
+        display: formatCode(entry.code),
+        phonetic: toPhonetic(entry.code),
+        expiresAt: entry.expiresAt,
+        updateToken: entry.updateToken,
+      },
+      spokenOfflineCode: null,
+    });
+    if (panel !== null && entry.mode === 'live') {
+      setPendingPanel(panel);
+      setLiveOpen(true);
+    }
+    // Once, on mount — the URL that carried the request is rewritten above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const recordShare = useCallback(
     (position: Position) => {
@@ -791,6 +798,8 @@ export function Share() {
     setStopFailure(null);
     setKeepingOfflineCode(false);
     setExtendNote(null);
+    setOwnCodeNote(null);
+    setPendingPanel(null);
     setSketch(null);
     setMarkers([]);
     setIconPickerOpen(false);
@@ -851,7 +860,10 @@ export function Share() {
   if (liveOpen && phase.name === 'shared') {
     const { session } = phase;
     return (
-      <div className="share-stage">
+      /* share-stage-account: the profile float below claims top-right, and
+         that class is what shifts the map's own locate control down a slot
+         so the two never overlap. */
+      <div className="share-stage share-stage-account">
         <SessionMap
           code={session.code}
           displayCode={formatCode(session.code)}
@@ -864,12 +876,18 @@ export function Share() {
               ? { name: shareName.trim() }
               : {})}
           {...(account.avatar !== null ? { avatar: account.avatar } : {})}
+          {...(pendingPanel !== null ? { initialPanel: pendingPanel } : {})}
           initialPosition={phase.position}
           initialSketch={sketch}
           initialMarkers={markers}
           onSketchShared={adoptLiveSketch}
           onMarkersShared={adoptLiveMarkers}
-          onLeave={() => setLiveOpen(false)}
+          onLeave={() => {
+            setLiveOpen(false);
+            // The deep link is spent — reopening the map by hand must not
+            // keep flinging the same panel open.
+            setPendingPanel(null);
+          }}
         />
         {/* The same floating account control the other map-first screens get.
             Top-right is free on the live map — zoom keeps to the top-left,
@@ -1210,6 +1228,10 @@ export function Share() {
           </div>
         </div>
       </div>
+
+      {/* The self-rejoin guard sent them here from the look-up screen —
+          say why quietly, once. */}
+      {ownCodeNote !== null && <div className="notice">{ownCodeNote}</div>}
 
       {/* The caller already read this one aloud. It is out in the world and
           permanent, and quietly replacing it with the code above would leave

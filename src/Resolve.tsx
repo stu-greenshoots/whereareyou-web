@@ -10,7 +10,8 @@ import {
 import { resolveSession, type ResolvedWithWarning } from './api.js';
 import { useAccount } from './AccountContext.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
-import { SessionMap } from './SessionMap.jsx';
+import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
+import { loadActiveShare, loadJoinedIdentity, rememberJoinedIdentity } from './local-session.js';
 import { useSharedConnectivity } from './connectivity.js';
 import { Map, escapeHtml } from './Map.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
@@ -57,6 +58,11 @@ export function Resolve() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   /** Set when this device has joined the resolved session's live room. */
   const [live, setLive] = useState<{ share: boolean; name: string } | null>(null);
+  /** Panel a push deep link asked for (#chat|#activity|#people) — consumed
+      by the first session view this visit opens, then forgotten. */
+  const [deepPanel, setDeepPanel] = useState<LivePanel | null>(() =>
+    panelFromFragment(window.location.hash),
+  );
   const { account } = useAccount();
   // The account name is the natural default for who you are in a room.
   const [joinName, setJoinName] = useState(account.name);
@@ -118,6 +124,19 @@ export function Resolve() {
 
       if (candidate.kind !== 'session') return;
 
+      // Self-rejoin guard, local state FIRST: if this code is the share THIS
+      // DEVICE currently owns, entering it here must never join our own room
+      // as a stranger — route back to the owner code screen instead (the
+      // resume flow over there shows a quiet note and takes it from here).
+      // Push deep links carry the same shape, so the fragment rides along.
+      const own = loadActiveShare();
+      if (own !== null && own.code === candidate.code && timeRemaining(own.expiresAt) !== 'expired') {
+        window.location.assign(
+          `${import.meta.env.BASE_URL}?resume=${candidate.code}${window.location.hash}`,
+        );
+        return;
+      }
+
       setBusy(true);
       setError(null);
       setOffline(null);
@@ -142,6 +161,17 @@ export function Resolve() {
           ...previous.filter((entry) => entry.code !== result.data.code),
         ].slice(0, 10),
       );
+
+      // Self-rejoin guard (b): a live session this device already joined
+      // re-enters as the SAME presented identity, straight back into the
+      // session view — no second join prompt, no fresh anonymous stranger.
+      if (result.data.mode === 'live') {
+        const known = loadJoinedIdentity(result.data.code);
+        if (known !== null) {
+          setJoinName(known.name);
+          setLive({ share: known.share, name: known.name });
+        }
+      }
     },
     [apiKey],
   );
@@ -172,8 +202,14 @@ export function Resolve() {
         tiles="dark"
         {...(live.name !== '' ? { name: live.name } : {})}
         {...(account.avatar !== null ? { avatar: account.avatar } : {})}
+        {...(deepPanel !== null ? { initialPanel: deepPanel } : {})}
         initialPosition={session.position}
-        onLeave={() => setLive(null)}
+        onLeave={() => {
+          setLive(null);
+          // The deep link is spent — leaving and re-entering by hand must
+          // not keep flinging the same panel open.
+          setDeepPanel(null);
+        }}
       />
     );
   }
@@ -250,11 +286,24 @@ export function Resolve() {
           <div className="notice-actions">
             <button
               className="button button-primary"
-              onClick={() => setLive({ share: true, name: joinName.trim() })}
+              onClick={() => {
+                // Remember the identity presented at hello, so re-entering
+                // this code resumes as the same person (self-rejoin guard).
+                const name = joinName.trim();
+                rememberJoinedIdentity(session.code, { share: true, name });
+                setLive({ share: true, name });
+              }}
             >
               Join and share my location
             </button>
-            <button className="button" onClick={() => setLive({ share: false, name: joinName.trim() })}>
+            <button
+              className="button"
+              onClick={() => {
+                const name = joinName.trim();
+                rememberJoinedIdentity(session.code, { share: false, name });
+                setLive({ share: false, name });
+              }}
+            >
               Just watch
             </button>
           </div>
