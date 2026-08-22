@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import L from 'leaflet';
 import { MAX_SKETCH_CHARS, MAX_SKETCH_SHAPES, encodeSketch, sketchBounds } from '@whereareyou/protocol';
 import type { Sketch, SketchColour } from '@whereareyou/protocol';
@@ -103,6 +104,23 @@ export interface MapProps {
    * an editable map would be horrible, so editable maps never set this.
    */
   fitSketch?: boolean;
+  /** Tiles only — no pin, no accuracy circle. The pre-location start map. */
+  hidePin?: boolean;
+  /** Zoom for the initial view (default 17). The start map opens wide. */
+  initialZoom?: number;
+  /**
+   * The map fills its parent and stays that way — no expand control, and
+   * `fullscreenOverlay` is always shown. Unlike the expand toggle (which
+   * fixes to the viewport), this fills whatever box the parent gives it, so
+   * the app header above stays reachable.
+   */
+  fullscreenLocked?: boolean;
+  /**
+   * Rendered at the bottom of the map whenever it is full screen — the
+   * share sheet, the start overlay, the code pill. Sits above the toolbar
+   * in the same bottom stack.
+   */
+  fullscreenOverlay?: ReactNode;
   /**
    * Adds an expand control that takes the map full screen — for the look-up
    * side, whose map is small, and for drawing, where a 280px strip is a
@@ -134,6 +152,10 @@ export function Map({
   onSketchChange,
   sketchAnchor,
   fitSketch = false,
+  hidePin = false,
+  initialZoom = 17,
+  fullscreenLocked = false,
+  fullscreenOverlay,
   allowFullscreen = false,
   showViewerLocation = false,
   className,
@@ -163,6 +185,7 @@ export function Map({
   // handlers never close over a stale sketch.
   const [activeTool, setActiveTool] = useState<DrawTool | 'none'>('none');
   const [ink, setInk] = useState<SketchColour>(0);
+  const [inkOpen, setInkOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [sketchFull, setSketchFull] = useState(false);
   const activeToolRef = useRef(activeTool);
@@ -177,6 +200,7 @@ export function Map({
   anchorRef.current = sketchAnchor ?? { lat, lon };
 
   const [fullscreen, setFullscreen] = useState(false);
+  const hadPinRef = useRef(!hidePin);
   const [viewerBusy, setViewerBusy] = useState(false);
   const [viewerNote, setViewerNote] = useState<string | null>(null);
   const viewerMarkerRef = useRef<L.Marker | null>(null);
@@ -185,7 +209,7 @@ export function Map({
   useEffect(() => {
     if (containerRef.current === null) return;
 
-    const instance = L.map(containerRef.current, { zoomControl: true }).setView([lat, lon], 17);
+    const instance = L.map(containerRef.current, { zoomControl: true }).setView([lat, lon], initialZoom);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
@@ -223,6 +247,8 @@ export function Map({
   // Sync marker, accuracy circle and trail to the current position.
   useEffect(() => {
     if (map === null) return;
+    // The start map has no position yet — tiles only, nothing to sync.
+    if (hidePin) return;
 
     // Amber for a reported (third-party) location, blue for the sharer's own.
     // A dispatcher confusing "where the caller is" with "where they say the
@@ -272,7 +298,7 @@ export function Map({
         trailRef.current.setLatLngs(trail);
       }
     }
-  }, [map, lat, lon, accuracyM, thirdParty, trail]);
+  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin]);
 
   // Sync the committed sketch. Same shape as the marker effect above, and its
   // handle is nulled in the same teardown, for the same StrictMode reason.
@@ -323,12 +349,19 @@ export function Map({
     return () => window.clearTimeout(timer);
   }, [viewerNote]);
 
+  // The moment the wide-open start map gets its first real fix, jump to
+  // street level — the view change IS the feedback that locating worked.
+  useEffect(() => {
+    if (map !== null && !hidePin && !hadPinRef.current) map.setView([lat, lon], 17);
+    hadPinRef.current = !hidePin;
+  }, [map, hidePin, lat, lon]);
+
   // Keep the view on the pin when the position changes underneath us — a live
   // session that walks off the edge of the map is worse than useless.
   useEffect(() => {
-    if (map === null) return;
+    if (map === null || hidePin) return;
     if (!map.getBounds().contains([lat, lon])) map.panTo([lat, lon]);
-  }, [map, lat, lon]);
+  }, [map, lat, lon, hidePin]);
 
   // Allow map clicks to reposition the pin when the map is editable.
   useEffect(() => {
@@ -485,6 +518,7 @@ export function Map({
 
   // The top-right controls stack downward in a fixed order; each one's
   // offset depends only on which controls precede it.
+  const isFull = fullscreen || fullscreenLocked;
   const expandSlot = onLocate !== undefined ? 2 : 1;
   const viewerSlot = (onLocate !== undefined ? 1 : 0) + (allowFullscreen ? 1 : 0) + 1;
   const slotClass = (slot: number) => (slot === 2 ? 'map-stack-2' : slot === 3 ? 'map-stack-3' : '');
@@ -509,6 +543,7 @@ export function Map({
   const pickTool = (tool: DrawTool) => {
     // Tapping the active tool again puts it down — the map goes back to
     // panning without needing to find the pan button.
+    setInkOpen(false);
     setActiveTool((current) => (current === tool ? 'none' : tool));
   };
 
@@ -530,7 +565,7 @@ export function Map({
   // which is not what a person in trouble should be looking at — the position
   // itself is unaffected and is written out in full directly below.
   return (
-    <div className={`map-frame ${fullscreen ? 'map-frame-full' : ''}`}>
+    <div className={`map-frame ${fullscreen ? 'map-frame-full' : ''} ${fullscreenLocked ? 'map-frame-locked' : ''}`}>
       <div ref={containerRef} className={className ?? 'map'} />
       {onLocate !== undefined && (
         <button
@@ -552,15 +587,21 @@ export function Map({
         </button>
       )}
 
-      {allowFullscreen && (
+      {allowFullscreen && !fullscreenLocked && !fullscreen && (
         <button
           type="button"
           className={`map-locate ${slotClass(expandSlot)}`}
-          onClick={() => setFullscreen((current) => !current)}
-          aria-label={fullscreen ? 'Leave full screen' : 'Make the map full screen'}
-          title={fullscreen ? 'Leave full screen' : 'Full screen'}
+          onClick={() => setFullscreen(true)}
+          aria-label="Make the map full screen"
+          title="Full screen"
         >
-          {fullscreen ? <CollapseIcon /> : <ExpandIcon />}
+          <ExpandIcon />
+        </button>
+      )}
+
+      {fullscreen && (
+        <button type="button" className="map-close-pill" onClick={() => setFullscreen(false)}>
+          <CloseIcon /> Close map
         </button>
       )}
 
@@ -586,8 +627,15 @@ export function Map({
 
       {viewerNote !== null && <p className="map-viewer-note">{viewerNote}</p>}
 
+      <div className="map-bottom-stack">
+      {sketchFull && (
+        <p className="map-tools-note">
+          The sketch is full. Undo or clear a shape to draw more.
+        </p>
+      )}
+
       {onSketchChange !== undefined && (
-        <div className={`map-tools ${offline ? 'map-tools-raised' : ''}`} role="toolbar" aria-label="Drawing tools">
+        <div className="map-tools" role="toolbar" aria-label="Drawing tools">
           {!toolsOpen ? (
             <button
               type="button"
@@ -610,6 +658,7 @@ export function Map({
                 title="Stop drawing"
                 onClick={() => {
                   setToolsOpen(false);
+                  setInkOpen(false);
                   setActiveTool('none');
                 }}
               >
@@ -619,17 +668,36 @@ export function Map({
               {toolButton('arrow', 'Draw an arrow', <ArrowIcon />)}
               {toolButton('circle', 'Draw a circle', <CircleIcon />)}
               <span className="map-tools-rule" aria-hidden="true" />
-              {SKETCH_INKS.map((hex, index) => (
+              {/* One swatch; the palette pops UPWARD so the toolbar stays
+                  one row and the map keeps the screen. */}
+              <span className="map-ink-wrap">
                 <button
-                  key={hex}
                   type="button"
-                  className={`map-ink ${ink === index ? 'map-ink-active' : ''}`}
-                  style={{ ['--ink' as string]: hex }}
-                  aria-label={`Ink ${index + 1}`}
-                  aria-pressed={ink === index}
-                  onClick={() => setInk(index as SketchColour)}
+                  className="map-ink"
+                  style={{ ['--ink' as string]: SKETCH_INKS[ink] }}
+                  aria-label="Change ink colour"
+                  aria-expanded={inkOpen}
+                  onClick={() => setInkOpen((open) => !open)}
                 />
-              ))}
+                {inkOpen && (
+                  <span className="map-ink-pop">
+                    {SKETCH_INKS.map((hex, index) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        className={`map-ink ${ink === index ? 'map-ink-active' : ''}`}
+                        style={{ ['--ink' as string]: hex }}
+                        aria-label={`Ink ${index + 1}`}
+                        aria-pressed={ink === index}
+                        onClick={() => {
+                          setInk(index as SketchColour);
+                          setInkOpen(false);
+                        }}
+                      />
+                    ))}
+                  </span>
+                )}
+              </span>
               <span className="map-tools-rule" aria-hidden="true" />
               <button
                 type="button"
@@ -656,17 +724,14 @@ export function Map({
         </div>
       )}
 
-      {sketchFull && (
-        <p className={`map-tools-note ${offline ? 'map-tools-raised' : ''}`}>
-          The sketch is full. Undo or clear a shape to draw more.
-        </p>
-      )}
-
       {offline && (
         <p className="map-offline">
           Map pictures need a connection. Your position is still exact — it is written out below.
         </p>
       )}
+
+      {isFull && fullscreenOverlay}
+      </div>
     </div>
   );
 }

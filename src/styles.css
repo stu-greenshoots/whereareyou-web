@@ -607,11 +607,6 @@
 /* Sits above Leaflet's tile (200) and marker (600) panes but clear of the
    attribution line, which stays visible. */
 .map-offline {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 22px;
-  z-index: 700;
   margin: 0;
   padding: 9px 11px;
   border-left: 4px solid var(--offline);
@@ -643,23 +638,18 @@
    locate button (top-right). Same surface conventions as .map-locate. Touch
    targets at 44px: used outdoors, one-handed, possibly in the rain. */
 .map-tools {
-  position: absolute;
-  left: 10px;
-  bottom: 24px;
-  z-index: 700;
+  align-self: flex-start;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
-  max-width: calc(100% - 20px);
+  max-width: 100%;
   padding: 4px;
   border: 1px solid var(--rule-soft);
   border-radius: 12px;
   background: var(--surface);
   box-shadow: 0 1px 6px #0003;
 }
-/* The offline notice occupies the bottom strip; step over it. */
-.map-tools.map-tools-raised { bottom: 96px; }
 .map-tool {
   width: 44px;
   height: 44px;
@@ -711,10 +701,7 @@
 
 /* "Sketch is full" — sits just above the toolbar, same surface. */
 .map-tools-note {
-  position: absolute;
-  left: 10px;
-  bottom: 130px;
-  z-index: 700;
+  align-self: flex-start;
   margin: 0;
   padding: 6px 10px;
   font-size: 13px;
@@ -724,7 +711,6 @@
   color: var(--text-dim);
   box-shadow: 0 1px 6px #0003;
 }
-.map-tools-note.map-tools-raised { bottom: 200px; }
 
 /* Console: what a drawing is, and what it is not. */
 .sketch-provenance {
@@ -778,3 +764,216 @@
   border: 2.5px solid #fff;
   box-shadow: 0 1px 4px #0006;
 }
+
+
+/* ---- Map bottom stack --------------------------------------------------
+   Everything that floats at the foot of the map — toolbar, notices, the
+   share sheet — stacks in one column so nothing has to know what else is
+   showing. The bottom padding keeps the OSM attribution line readable. */
+.map-bottom-stack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 700;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0 10px 22px;
+  pointer-events: none;
+}
+.map-bottom-stack > * { pointer-events: auto; }
+.map-frame-locked .map-bottom-stack,
+.map-frame-full .map-bottom-stack {
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+/* Ink popover — the palette opens UPWARD from the single swatch so the
+   toolbar stays one row. */
+.map-ink-wrap { position: relative; display: flex; }
+.map-ink-pop {
+  position: absolute;
+  bottom: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 2px 10px #0004;
+}
+
+/* Leaving full screen gets words, not just a glyph. */
+.map-close-pill {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 701;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 22px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 1px 6px #0003;
+}
+.map-close-pill svg { width: 16px; height: 16px; }
+
+/* ---- Map-first share screen -------------------------------------------- */
+body.map-first .app { max-width: none; }
+body.map-first .main { padding: 0; display: flex; flex-direction: column; }
+body.map-first .footer { display: none; }
+.share-stage { flex: 1; display: flex; min-height: 0; }
+.share-stage .map-frame { flex: 1; }
+.map-fill { height: 100%; border-radius: 0; border: none; }
+
+/* The floating sheet at the foot of a full-screen map. */
+.map-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 55dvh;
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 4px 18px #0004;
+}
+.map-sheet .big-button { min-height: 64px; padding: 16px 20px; font-size: 18px; }
+.map-sheet .accuracy-readout { margin: 0; }
+
+/* The start overlay is buttons floating straight on the tiles. */
+.map-sheet-start {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0 2px 4px;
+  overflow: visible;
+  max-height: none;
+}
+.map-sheet-start .big-button { min-height: 88px; box-shadow: 0 6px 22px #0005; }
+.map-sheet-start .link-button.start-alt,
+.map-sheet-start .notice,
+.map-sheet-start .panel {
+  box-shadow: 0 2px 12px #0004;
+}
+.map-sheet-start .link-button.start-alt {
+  align-self: center;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+/* Full-screen shared map: the code rides along, with its share button. */
+.map-sheet-code {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-height: none;
+  overflow: visible;
+}
+.map-code-line {
+  margin: 0;
+  font-family: var(--font-code, ui-monospace, monospace);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.map-sheet-code .button { flex: 0 1 auto; }
+
+/* ---- Concertina panels ------------------------------------------------- */
+.panel-concertina summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+}
+.panel-concertina summary::-webkit-details-marker { display: none; }
+.panel-concertina summary::after {
+  content: '';
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-dim);
+  border-bottom: 2px solid var(--text-dim);
+  transform: rotate(45deg);
+  transition: transform 0.15s;
+}
+.panel-concertina[open] summary::after { transform: rotate(-135deg); }
+.panel-concertina[open] summary { margin-bottom: 8px; }
+
+/* No connection: the fallback formats ARE the product — flag them. */
+.panel-urgent { border-left: 4px solid var(--offline); }
+
+.sheet-options-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---- Duration picker --------------------------------------------------- */
+.seg-block { display: flex; flex-direction: column; gap: 6px; }
+.seg-label {
+  font-family: var(--font-label);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+}
+.seg-row { display: flex; gap: 6px; }
+.seg {
+  flex: 1;
+  min-height: 40px;
+  padding: 8px 4px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  cursor: pointer;
+}
+.seg-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 650;
+}
+
+/* ---- Past shares ------------------------------------------------------- */
+.history-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.history-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  background: var(--surface-2, var(--surface));
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.history-row strong { font-weight: 650; }
+.history-row span { font-size: 12px; color: var(--text-dim); }

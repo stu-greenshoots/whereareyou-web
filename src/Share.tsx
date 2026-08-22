@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor } from '@whereareyou/protocol';
+import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor } from '@whereareyou/protocol';
 import type { CreateSessionResponse, Position, SessionMode, Sketch } from '@whereareyou/protocol';
 import { mintSession, revokeSession, updatePosition } from './api.js';
 import { useConnectivity } from './connectivity.js';
@@ -50,12 +50,72 @@ const DEMO_POSITION: Position = {
   takenAt: new Date().toISOString(),
 };
 
+/** Where the start map opens when this device has never shared anything. */
+const UK_CENTRE = { lat: 54.3, lon: -3.4 };
+
 /** A satellite-grade fix. Stop refining once we reach it. */
 const ACCURACY_GOOD_M = 20;
 /** Below this quality, prompt the sender to try for a better fix. */
 const ACCURACY_POOR_M = 50;
 /** How long to keep refining a fix before settling for the best so far. */
 const ACQUIRE_MAX_MS = 20_000;
+
+/** The durations on offer. The server clamps to 60s–4h regardless. */
+const TTL_CHOICES: Array<[number, string]> = [
+  [1800, '30 min'],
+  [3600, '1 hour'],
+  [7200, '2 hours'],
+  [14_400, '4 hours'],
+];
+
+/**
+ * Past shares, kept ON THIS DEVICE ONLY so a spot can be shared again without
+ * hunting for it — never sent anywhere, capped short, and clearable from the
+ * same screen it appears on. Re-sharing goes through the normal located
+ * screen: the caller sees the pin and presses the button themselves, so a
+ * stale spot cannot be sent by accident.
+ */
+interface PastShare {
+  lat: number;
+  lon: number;
+  accuracyM: number;
+  note: string;
+  /** Encoded sketch payload, restored onto the map when reused. */
+  sketch: string | null;
+  thirdParty: boolean;
+  at: number;
+}
+
+const HISTORY_KEY = 'shareHistory';
+const HISTORY_MAX = 8;
+
+function loadHistory(): PastShare[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (raw === null) return [];
+    const parsed = JSON.parse(raw) as PastShare[];
+    return Array.isArray(parsed)
+      ? parsed.filter((e) => typeof e.lat === 'number' && typeof e.lon === 'number')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistHistory(entries: PastShare[]): void {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+  } catch {
+    // Storage full or blocked — the history is a convenience, not a record.
+  }
+}
+
+/** Roughly the same spot: replace rather than pile up near-duplicates. */
+function samePlace(a: PastShare, b: PastShare): boolean {
+  const east = (a.lon - b.lon) * 111_320 * Math.cos((a.lat * Math.PI) / 180);
+  const north = (a.lat - b.lat) * 111_320;
+  return Math.hypot(east, north) < 50 && a.note === b.note;
+}
 
 function geolocationErrorMessage(error: GeolocationPositionError): {
   message: string;
@@ -87,6 +147,9 @@ export function Share() {
   const [note, setNote] = useState('');
   /** The caller's drawing. Anchored at the pin when the first shape lands. */
   const [sketch, setSketch] = useState<Sketch | null>(null);
+  /** Requested lifetime of the code. The server clamps it regardless. */
+  const [ttl, setTtl] = useState(1800);
+  const [history, setHistory] = useState<PastShare[]>(loadHistory);
   const [, forceTick] = useState(0);
   const watchRef = useRef<number | null>(null);
   const { online, linkUp, reportReachable, reportUnreachable } = useConnectivity();
@@ -100,6 +163,17 @@ export function Share() {
   const acquireWatchRef = useRef<number | null>(null);
   const acquireTimerRef = useRef<number | null>(null);
   const bestAccuracyRef = useRef<number>(Infinity);
+
+  // Everything before a code exists is map-first: the map IS the screen and
+  // the controls float over it. Once a code exists the code is the product
+  // and the page becomes the issued document again.
+  const mapFirst =
+    phase.name !== 'shared' && phase.name !== 'offline-shared';
+
+  useEffect(() => {
+    document.body.classList.toggle('map-first', mapFirst);
+    return () => document.body.classList.remove('map-first');
+  }, [mapFirst]);
 
   // Drive the expiry countdown.
   useEffect(() => {
@@ -115,6 +189,31 @@ export function Share() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [phase.name]);
+
+  const recordShare = useCallback(
+    (position: Position) => {
+      const entry: PastShare = {
+        lat: position.lat,
+        lon: position.lon,
+        accuracyM: position.accuracyM,
+        note: note.trim(),
+        sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
+        thirdParty,
+        at: Date.now(),
+      };
+      setHistory((previous) => {
+        const next = [entry, ...previous.filter((e) => !samePlace(e, entry))].slice(0, HISTORY_MAX);
+        persistHistory(next);
+        return next;
+      });
+    },
+    [note, sketch, thirdParty],
+  );
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    persistHistory([]);
+  }, []);
 
   const stopAcquire = useCallback(() => {
     if (acquireWatchRef.current !== null) navigator.geolocation.clearWatch(acquireWatchRef.current);
@@ -198,6 +297,27 @@ export function Share() {
     setPhase({ name: 'located', position: { ...DEMO_POSITION, takenAt: new Date().toISOString() } });
   }, [stopAcquire]);
 
+  /** Reuse a past share: back onto the located screen with everything set. */
+  const reuseShare = useCallback(
+    (entry: PastShare) => {
+      stopAcquire();
+      setThirdParty(entry.thirdParty);
+      setNote(entry.note);
+      setSketch(entry.sketch !== null ? decodeSketch(entry.sketch) : null);
+      setPhase({
+        name: 'located',
+        position: {
+          lat: entry.lat,
+          lon: entry.lon,
+          accuracyM: entry.accuracyM,
+          source: 'manual',
+          takenAt: new Date().toISOString(),
+        },
+      });
+    },
+    [stopAcquire],
+  );
+
   /**
    * Hand the caller a permanent, self-contained code.
    *
@@ -208,6 +328,7 @@ export function Share() {
   const fallToOfflineCode = useCallback(
     (position: Position, cause: OfflineCause, detail: string | null, existingCode?: string) => {
       setKeepingOfflineCode(false);
+      recordShare(position);
       setPhase({
         name: 'offline-shared',
         position,
@@ -216,7 +337,7 @@ export function Share() {
         detail,
       });
     },
-    [],
+    [recordShare],
   );
 
   const mint = useCallback(
@@ -238,6 +359,7 @@ export function Share() {
         position,
         mode,
         subject: thirdParty ? 'third-party' : 'self',
+        ttlSeconds: ttl,
         ...(note.trim() !== '' ? { note: note.trim() } : {}),
         ...(sketchPayload !== undefined ? { sketch: sketchPayload } : {}),
       });
@@ -260,9 +382,10 @@ export function Share() {
       }
 
       reportReachable();
+      recordShare(position);
       setPhase({ name: 'shared', position, session: result.data, spokenOfflineCode });
     },
-    [mode, thirdParty, note, sketch, fallToOfflineCode, reportReachable, reportUnreachable],
+    [mode, thirdParty, note, sketch, ttl, fallToOfflineCode, recordShare, reportReachable, reportUnreachable],
   );
 
   const share = useCallback(() => {
@@ -356,150 +479,134 @@ export function Share() {
 
   // ---- Render -----------------------------------------------------------
 
-  if (phase.name === 'idle' || phase.name === 'locating' || phase.name === 'error') {
+  if (mapFirst) {
+    const located = phase.name === 'located' || phase.name === 'minting';
+    const centre = located
+      ? phase.position
+      : history.length > 0
+        ? { lat: history[0]!.lat, lon: history[0]!.lon }
+        : UK_CENTRE;
+
     return (
-      <div className="stack centred">
-        {!online && <NoSignalNotice linkUp={linkUp} />}
+      <div className="share-stage">
+        <Map
+          lat={centre.lat}
+          lon={centre.lon}
+          accuracyM={located ? phase.position.accuracyM : 0}
+          hidePin={!located}
+          initialZoom={located ? 17 : history.length > 0 ? 13 : 5}
+          thirdParty={thirdParty}
+          offline={!online}
+          locating={acquiring}
+          sketch={located ? sketch : null}
+          fullscreenLocked
+          className="map map-fill"
+          {...(located
+            ? {
+                onLocate: relocate,
+                onSketchChange: setSketch,
+                // A hand-placed pin is a deliberate choice, not a sensor
+                // guess — its accuracy comes from the zoom, which the Map
+                // computes. Stop any GNSS refinement so it can't drag the
+                // pin back off the spot the caller just chose.
+                onMove: (lat: number, lon: number, accuracyM: number) => {
+                  stopAcquire();
+                  setPhase({
+                    name: 'located',
+                    position: {
+                      ...phase.position,
+                      lat,
+                      lon,
+                      accuracyM,
+                      source: 'manual',
+                      takenAt: new Date().toISOString(),
+                    },
+                  });
+                },
+              }
+            : {})}
+          fullscreenOverlay={
+            located ? (
+              <LocatedSheet
+                position={phase.position}
+                minting={phase.name === 'minting'}
+                acquiring={acquiring}
+                online={online}
+                sketch={sketch}
+                thirdParty={thirdParty}
+                setThirdParty={setThirdParty}
+                mode={mode}
+                setMode={setMode}
+                note={note}
+                setNote={setNote}
+                ttl={ttl}
+                setTtl={setTtl}
+                onRelocate={relocate}
+                onShare={share}
+              />
+            ) : (
+              <div className="map-sheet map-sheet-start">
+                {!online && <NoSignalNotice linkUp={linkUp} />}
 
-        <button className="big-button" onClick={locate} disabled={phase.name === 'locating'}>
-          {phase.name === 'locating' ? 'Getting your location…' : 'Share my location'}
-        </button>
+                {phase.name === 'error' && (
+                  <div className="notice notice-warn">
+                    <p>{phase.message}</p>
+                    {phase.recoverable && (
+                      <button className="link-button" onClick={useManualPin}>
+                        Place a pin on the map instead
+                      </button>
+                    )}
+                  </div>
+                )}
 
-        {phase.name === 'error' && (
-          <div className="notice notice-warn">
-            <p>{phase.message}</p>
-            {phase.recoverable && (
-              <button className="link-button" onClick={useManualPin}>
-                Place a pin on the map instead
-              </button>
-            )}
-          </div>
-        )}
+                <button className="big-button" onClick={locate} disabled={phase.name === 'locating'}>
+                  {phase.name === 'locating' ? 'Getting your location…' : 'Share my location'}
+                </button>
 
-        {phase.name === 'idle' && (
-          <button className="link-button" onClick={useManualPin}>
-            Report a different location instead
-          </button>
-        )}
+                {phase.name === 'idle' && (
+                  <button className="link-button start-alt" onClick={useManualPin}>
+                    Report a different location instead
+                  </button>
+                )}
+
+                {phase.name === 'idle' && history.length > 0 && (
+                  <details className="panel panel-concertina start-history">
+                    <summary className="panel-title">Share a previous spot again</summary>
+                    <div className="history-list">
+                      {history.map((entry) => (
+                        <button key={entry.at} className="history-row" onClick={() => reuseShare(entry)}>
+                          <strong>
+                            {entry.note !== '' ? entry.note : `${entry.lat.toFixed(4)}, ${entry.lon.toFixed(4)}`}
+                          </strong>
+                          <span>
+                            {new Date(entry.at).toLocaleString([], {
+                              day: 'numeric',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                            {entry.sketch !== null ? ' · has a drawing' : ''}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    {/* This list lives on this phone only. Still, a borrowed
+                        phone shouldn't advertise where its owner has been. */}
+                    <button className="link-button" onClick={clearHistory}>
+                      Clear this list
+                    </button>
+                  </details>
+                )}
+              </div>
+            )
+          }
+        />
       </div>
     );
   }
 
   const position = phase.position;
   const formats = allFormats(position.lat, position.lon);
-
-  if (phase.name === 'located' || phase.name === 'minting') {
-    return (
-      <div className="stack">
-        {!online && <NoSignalNotice linkUp={linkUp} />}
-
-        <Map
-          lat={position.lat}
-          lon={position.lon}
-          accuracyM={position.accuracyM}
-          thirdParty={thirdParty}
-          offline={!online}
-          onLocate={relocate}
-          locating={acquiring}
-          sketch={sketch}
-          onSketchChange={setSketch}
-          allowFullscreen
-          onMove={(lat, lon, accuracyM) => {
-            // A hand-placed pin is a deliberate choice, not a sensor guess — so
-            // its accuracy comes from how far the map is zoomed in, which the
-            // Map computes. Stop any GNSS refinement so it can't drag the pin
-            // back off the spot the caller just chose.
-            stopAcquire();
-            setPhase({
-              name: 'located',
-              position: { ...position, lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
-            });
-          }}
-        />
-
-        {/* Tell the sender how good the fix is before they commit to it. A ±40m
-            WiFi fix and a ±8m satellite fix are both usable, but the operator
-            should be told which. */}
-        <p className="accuracy-readout">
-          {acquiring
-            ? `Improving the fix… ±${Math.round(position.accuracyM)}m so far`
-            : describeSource(position.source, position.accuracyM)}
-        </p>
-
-        {!online && sketch !== null && sketch.shapes.length > 0 && (
-          <div className="notice notice-offline">
-            <strong>Your drawing stays on this phone.</strong>
-            <span>
-              An offline code carries a position and nothing else — there is no server to hold the
-              drawing. Describe it out loud instead, or get an expiring code when you have signal.
-            </span>
-          </div>
-        )}
-
-        {/* A GNSS fix that settled poor. Manual pins are excluded — they are as
-            precise as the placement, and re-locating would move them. */}
-        {!acquiring && position.source !== 'manual' && position.accuracyM > ACCURACY_POOR_M && (
-          <div className="notice notice-warn">
-            <p>
-              This fix is only accurate to about ±{Math.round(position.accuracyM)}m. On a phone,
-              move to open sky or near a window and try again. On a laptop it's WiFi-based and
-              won't get much tighter — a phone outdoors is far more precise.
-            </p>
-            <button className="link-button" onClick={relocate}>
-              Try for a better fix
-            </button>
-          </div>
-        )}
-
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={thirdParty}
-            onChange={(event) => setThirdParty(event.target.checked)}
-          />
-          <span>
-            <strong>This is not where I am</strong>
-            <small>I'm reporting somewhere else — drag the pin to it</small>
-          </span>
-        </label>
-
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={mode === 'live' && online}
-            disabled={!online}
-            onChange={(event) => setMode(event.target.checked ? 'live' : 'static')}
-          />
-          <span>
-            <strong>Keep updating my position</strong>
-            <small>
-              {online
-                ? "For when you're moving. Uses more battery."
-                : 'Needs a connection — a code that follows you has to live on the server.'}
-            </small>
-          </span>
-        </label>
-
-        <input
-          className="note-input"
-          placeholder="Anything else? e.g. third floor, back stairwell"
-          value={note}
-          maxLength={280}
-          onChange={(event) => setNote(event.target.value)}
-        />
-
-        <CoordinatePanel formats={formats} position={position} />
-
-        <button className="big-button" onClick={share} disabled={phase.name === 'minting'}>
-          {phase.name === 'minting'
-            ? 'Creating code…'
-            : online
-              ? 'Get my code'
-              : 'Get my offline code'}
-        </button>
-      </div>
-    );
-  }
 
   if (phase.name === 'offline-shared') {
     return (
@@ -613,9 +720,161 @@ export function Share() {
         offline={!online}
         sketch={sketch}
         fitSketch
+        allowFullscreen
+        fullscreenOverlay={
+          <div className="map-sheet map-sheet-code">
+            <p className="map-code-line">{formatCode(session.code)}</p>
+            <button className="button button-primary" onClick={nativeShare}>
+              Share code
+            </button>
+          </div>
+        }
       />
 
-      <CoordinatePanel formats={formats} position={position} />
+      <CoordinatePanel formats={formats} position={position} online={online} />
+    </div>
+  );
+}
+
+/**
+ * The floating controls over the located map: how good the fix is, the one
+ * button that matters, and everything else folded away until asked for.
+ */
+function LocatedSheet({
+  position,
+  minting,
+  acquiring,
+  online,
+  sketch,
+  thirdParty,
+  setThirdParty,
+  mode,
+  setMode,
+  note,
+  setNote,
+  ttl,
+  setTtl,
+  onRelocate,
+  onShare,
+}: {
+  position: Position;
+  minting: boolean;
+  acquiring: boolean;
+  online: boolean;
+  sketch: Sketch | null;
+  thirdParty: boolean;
+  setThirdParty: (value: boolean) => void;
+  mode: SessionMode;
+  setMode: (value: SessionMode) => void;
+  note: string;
+  setNote: (value: string) => void;
+  ttl: number;
+  setTtl: (value: number) => void;
+  onRelocate: () => void;
+  onShare: () => void;
+}) {
+  const formats = allFormats(position.lat, position.lon);
+
+  return (
+    <div className="map-sheet">
+      {/* Tell the sender how good the fix is before they commit to it. A ±40m
+          WiFi fix and a ±8m satellite fix are both usable, but the operator
+          should be told which. */}
+      <p className="accuracy-readout">
+        {acquiring
+          ? `Improving the fix… ±${Math.round(position.accuracyM)}m so far`
+          : describeSource(position.source, position.accuracyM)}
+      </p>
+
+      {!online && sketch !== null && sketch.shapes.length > 0 && (
+        <div className="notice notice-offline">
+          <strong>Your drawing stays on this phone.</strong>
+          <span>
+            An offline code carries a position and nothing else — there is no server to hold the
+            drawing. Describe it out loud instead, or get an expiring code when you have signal.
+          </span>
+        </div>
+      )}
+
+      {/* A GNSS fix that settled poor. Manual pins are excluded — they are as
+          precise as the placement, and re-locating would move them. */}
+      {!acquiring && position.source !== 'manual' && position.accuracyM > ACCURACY_POOR_M && (
+        <div className="notice notice-warn">
+          <p>
+            This fix is only accurate to about ±{Math.round(position.accuracyM)}m. On a phone,
+            move to open sky or near a window and try again. On a laptop it's WiFi-based and
+            won't get much tighter — a phone outdoors is far more precise.
+          </p>
+          <button className="link-button" onClick={onRelocate}>
+            Try for a better fix
+          </button>
+        </div>
+      )}
+
+      <details className="panel panel-concertina sheet-options">
+        <summary className="panel-title">Options</summary>
+        <div className="sheet-options-body">
+          <div className="seg-block">
+            <span className="seg-label">Code lasts for</span>
+            <div className="seg-row" role="radiogroup" aria-label="How long the code lasts">
+              {TTL_CHOICES.map(([seconds, label]) => (
+                <button
+                  key={seconds}
+                  type="button"
+                  className={`seg ${ttl === seconds ? 'seg-active' : ''}`}
+                  aria-pressed={ttl === seconds}
+                  onClick={() => setTtl(seconds)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={thirdParty}
+              onChange={(event) => setThirdParty(event.target.checked)}
+            />
+            <span>
+              <strong>This is not where I am</strong>
+              <small>I'm reporting somewhere else — drag the pin to it</small>
+            </span>
+          </label>
+
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={mode === 'live' && online}
+              disabled={!online}
+              onChange={(event) => setMode(event.target.checked ? 'live' : 'static')}
+            />
+            <span>
+              <strong>Keep updating my position</strong>
+              <small>
+                {online
+                  ? "For when you're moving. Uses more battery."
+                  : 'Needs a connection — a code that follows you has to live on the server.'}
+              </small>
+            </span>
+          </label>
+
+          <input
+            className="note-input"
+            placeholder="Anything else? e.g. third floor, back stairwell"
+            value={note}
+            maxLength={280}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </div>
+      </details>
+
+      <CoordinatePanel formats={formats} position={position} online={online} />
+
+      <button className="big-button" onClick={onShare} disabled={minting}>
+        {minting ? 'Creating code…' : online ? 'Get my code' : 'Get my offline code'}
+      </button>
     </div>
   );
 }
@@ -757,9 +1016,18 @@ function OfflineShared({
         offline={!online}
         sketch={sketch}
         fitSketch
+        allowFullscreen
+        fullscreenOverlay={
+          <div className="map-sheet map-sheet-code">
+            <p className="map-code-line">{formatOfflineCode(code)}</p>
+            <button className="button button-primary" onClick={onShare}>
+              Share code
+            </button>
+          </div>
+        }
       />
 
-      <CoordinatePanel formats={formats} position={position} omitOfflineCode />
+      <CoordinatePanel formats={formats} position={position} online={online} omitOfflineCode />
     </div>
   );
 }
@@ -804,26 +1072,45 @@ function PhoneticGrid({ code }: { code: string }) {
 }
 
 /**
- * The fallback panel. Always visible, always rendered from local state with no
- * network call — minting a code needs connectivity, and if that connectivity
- * goes away the caller must still have something they can read down the phone.
+ * The fallback panel. Always rendered from local state with no network call —
+ * minting a code needs connectivity, and if that connectivity goes away the
+ * caller must still have something they can read down the phone.
+ *
+ * PROMINENT — open, and flagged — when there is no connection, because these
+ * ARE the product then. Folded away behind its summary when there is one: a
+ * person with a working code doesn't need four fallback formats competing
+ * with it.
  */
 function CoordinatePanel({
   formats,
   position,
+  online,
   omitOfflineCode = false,
 }: {
   formats: ReturnType<typeof allFormats>;
   position: Position;
+  online: boolean;
   /** Set when the offline code is already the hero and repeating it would
       invite the caller to read out the same thing twice. */
   omitOfflineCode?: boolean;
 }) {
   const offlineCode = encodeOffline(position.lat, position.lon);
 
+  // Managed as state rather than a bare `open` attribute: the shared screen
+  // re-renders every second for its countdown, and a prop-driven attribute
+  // would slam the panel shut against the user's toggle on every tick.
+  const [open, setOpen] = useState(!online);
+  useEffect(() => {
+    if (!online) setOpen(true);
+  }, [online]);
+
   return (
-    <section className="panel">
-      <h2 className="panel-title">If the code doesn't work</h2>
+    <details
+      className={`panel panel-concertina ${!online ? 'panel-urgent' : ''}`}
+      open={open}
+      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="panel-title">If the code doesn't work</summary>
       <p className="panel-hint">Any of these also identify this spot.</p>
 
       {/* Computed on this device with no network call, so it survives losing
@@ -835,6 +1122,6 @@ function CoordinatePanel({
       <CopyRow label="Latitude, longitude" value={formats.latLon} />
       {formats.plusCode !== null && <CopyRow label="Plus Code" value={formats.plusCode} />}
       {formats.osGridRef !== null && <CopyRow label="OS grid reference" value={formats.osGridRef} />}
-    </section>
+    </details>
   );
 }
