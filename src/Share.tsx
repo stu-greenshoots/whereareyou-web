@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
 import type { CreateSessionResponse, MarkerIcon, Position, SessionMarker, SessionMode, Sketch } from '@whereareyou/protocol';
-import { mintSession, revokeSession, upgradeToLive } from './api.js';
+import { extendSession, mintSession, revokeSession, upgradeToLive } from './api.js';
 import { useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
@@ -74,6 +74,17 @@ const TTL_CHOICES: Array<[number, string]> = [
   [3600, '1 hour'],
   [7200, '2 hours'],
   [14_400, '4 hours'],
+];
+
+/**
+ * Extensions on offer, in minutes. All within the api's per-call schema cap
+ * (EXTEND_MAX_MINUTES, 180); the server additionally clamps cumulative
+ * lifetime to 24h from mint, and we render whatever expiry it returns.
+ */
+const EXTEND_CHOICES: Array<[number, string]> = [
+  [30, '+30 min'],
+  [60, '+1 hour'],
+  [180, '+3 hours'],
 ];
 
 /**
@@ -278,6 +289,10 @@ export function Share() {
 
   /** Set when the caller has declined the offer of an expiring code. */
   const [keepingOfflineCode, setKeepingOfflineCode] = useState(false);
+  /** An extend request is in flight. */
+  const [extendBusy, setExtendBusy] = useState(false);
+  /** Outcome worth telling the owner about (the 24h cap, a failure). */
+  const [extendNote, setExtendNote] = useState<string | null>(null);
   /** Set when "stop sharing" could not reach the server. */
   const [stopFailure, setStopFailure] = useState<string | null>(null);
   /** A fix is being acquired/refined (initial locate, or the map's locate button). */
@@ -643,6 +658,48 @@ export function Share() {
     [mode, thirdParty, note, sketch, markers, ttl, fallToOfflineCode, recordShare, reportReachable, reportUnreachable],
   );
 
+  /**
+   * The session's expiry moved — an extend response, or the room's `expiry`
+   * fanout. The screen and the stored resume entry must both learn, or a
+   * reload would resurrect the old countdown.
+   */
+  const adoptExpiry = useCallback((expiresAt: string) => {
+    setPhase((current) =>
+      current.name === 'shared'
+        ? { ...current, session: { ...current.session, expiresAt } }
+        : current,
+    );
+    setResumable((current) => {
+      if (current === null) return current;
+      const updated = { ...current, expiresAt };
+      persistActiveShare(updated);
+      return updated;
+    });
+  }, []);
+
+  const extend = useCallback(
+    async (addMinutes: number) => {
+      if (phase.name !== 'shared') return;
+      setExtendBusy(true);
+      setExtendNote(null);
+      const result = await extendSession(phase.session.code, phase.session.updateToken, addMinutes);
+      setExtendBusy(false);
+      if (!result.ok) {
+        if (result.status === 0) reportUnreachable();
+        setExtendNote(`Could not extend the code. ${result.message}`);
+        return;
+      }
+      reportReachable();
+      // At the 24h cumulative cap the server returns the expiry unchanged —
+      // the response is the truth, so render it and say so quietly.
+      if (result.data.expiresAt === phase.session.expiresAt) {
+        setExtendNote('This code has reached its 24-hour limit and cannot run longer.');
+      }
+      adoptExpiry(result.data.expiresAt);
+    },
+    [phase, adoptExpiry, reportReachable, reportUnreachable],
+  );
+
   const share = useCallback(() => {
     if (phase.name !== 'located') return;
     stopAcquire();
@@ -680,6 +737,9 @@ export function Share() {
         onLeft: () => {},
         onEnded: () => {},
         onStatus: () => {},
+        // An extend confirms over REST, but the room's fanout also lands
+        // here — either way the countdown moves.
+        onExpiry: adoptExpiry,
       },
     });
     // Joiners only see what travels the wire — after a reload the drawing
@@ -722,6 +782,7 @@ export function Share() {
   const startAgain = useCallback(() => {
     setStopFailure(null);
     setKeepingOfflineCode(false);
+    setExtendNote(null);
     setSketch(null);
     setMarkers([]);
     setIconPickerOpen(false);
@@ -1124,6 +1185,29 @@ export function Share() {
           {expired ? 'Start again' : 'Stop sharing'}
         </button>
       </div>
+
+      {/* Extending is the owner's call and needs the resolver; the server
+          clamps cumulative lifetime at 24h and the countdown above renders
+          whatever expiry it actually granted. */}
+      {!expired && online && (
+        <div className="seg-block extend-block">
+          <span className="seg-label">Keep the code running longer</span>
+          <div className="seg-row" role="group" aria-label="Extend the code">
+            {EXTEND_CHOICES.map(([minutes, label]) => (
+              <button
+                key={minutes}
+                type="button"
+                className="seg"
+                disabled={extendBusy}
+                onClick={() => void extend(minutes)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {extendNote !== null && <p className="extend-note">{extendNote}</p>}
+        </div>
+      )}
 
       {!expired && (
         <button
