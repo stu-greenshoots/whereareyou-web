@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import L from 'leaflet';
-import { MARKER_ICONS, MAX_SKETCH_CHARS, MAX_SKETCH_SHAPES, encodeSketch, sketchBounds } from '@whereareyou/protocol';
+import {
+  MARKER_ICONS,
+  MAX_SESSION_MARKERS,
+  MAX_SESSION_ZONES,
+  MAX_SKETCH_CHARS,
+  MAX_SKETCH_SHAPES,
+  encodeSketch,
+  sketchBounds,
+} from '@whereareyou/protocol';
 import type { MarkerIcon, Sketch, SketchColour } from '@whereareyou/protocol';
 import { SKETCH_INKS, attachSketch, type SketchHandle } from './sketch-layer.js';
 import {
@@ -36,9 +44,25 @@ function placementAccuracy(lat: number, zoom: number): number {
  */
 const SAFE_AVATAR = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 
+/** Marker names, zone names and chat arrive over the wire from other people;
+    anything of theirs that lands in divIcon/popup HTML goes through here. */
+export function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function avatarImg(avatar: string | undefined): string | null {
-  if (avatar === undefined || avatar.length > 20_000 || !SAFE_AVATAR.test(avatar)) return null;
+  if (!isSafeAvatar(avatar)) return null;
   return `<img class="marker-avatar" src="${avatar}" alt="" />`;
+}
+
+/** The same gate, for React-rendered faces (chat rows, roster, cards). */
+export function isSafeAvatar(avatar: string | undefined): avatar is string {
+  return avatar !== undefined && avatar.length <= 20_000 && SAFE_AVATAR.test(avatar);
 }
 
 // Leaflet's default marker icons are resolved relative to the CSS, which breaks
@@ -51,8 +75,8 @@ function pinIcon(colour: string, avatar?: string): L.DivIcon {
   return L.divIcon({
     className: 'pin-icon',
     html: `<span class="pin ${img !== null ? 'pin-has-avatar' : ''}" style="--pin-colour:${colour}">${img ?? ''}</span>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
   });
 }
 
@@ -86,6 +110,32 @@ export interface MapPeer {
   /** Small data-URL photo shown inside the dot, when they have one. */
   avatar?: string | undefined;
   position: { lat: number; lon: number; accuracyM: number };
+  /** Tapping the dot — opens that participant's card in the live room. */
+  onTap?: (() => void) | undefined;
+}
+
+/**
+ * A named zone from the live room — a shared, first-class circle, drawn
+ * dashed and neutral so it can never be mistaken for sketch ink (solid,
+ * white-cased) or for an accuracy circle.
+ */
+export interface MapZone {
+  id: string;
+  name: string;
+  center: { lat: number; lon: number };
+  radiusM: number;
+  /** When set, the label chip grows a small ×. Any participant may remove. */
+  onRemove?: (() => void) | undefined;
+}
+
+/**
+ * A transient "X said something" bubble over a participant's position.
+ * The parent owns the lifetime (a few seconds); tapping any bubble opens
+ * the chat panel.
+ */
+export interface MapChatFlag {
+  id: string;
+  position: { lat: number; lon: number };
 }
 
 const PEER_COLOUR = '#475569';
@@ -109,12 +159,18 @@ export type TileVariant = keyof typeof TILE_SOURCES;
  */
 export interface PlacedMarker {
   id: string;
+  /** The PLACER — used for the initial fallback when there is no icon. */
   label?: string | undefined;
+  /** The marker's own short name, shown as a chip under the diamond. */
+  name?: string | undefined;
   position: { lat: number; lon: number };
   /** What the spot IS; without one the diamond shows the placer's initial. */
   icon?: MarkerIcon | undefined;
   /** Tapping the diamond — how "tap your marker to change its icon" works. */
   onTap?: (() => void) | undefined;
+  /** Popup content (pre-escaped HTML) — the "open in maps" affordance for
+      markers that are not ours to edit. Mutually exclusive with onTap. */
+  popupHtml?: string | undefined;
 }
 
 /**
@@ -131,6 +187,19 @@ export const MARKER_GLYPHS: Record<MarkerIcon, string> = {
   car: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 7l1.2-3h5.6L10 7v2.3H2Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="4" cy="9.6" r="1" fill="currentColor"/><circle cx="8" cy="9.6" r="1" fill="currentColor"/></svg>',
   house:
     '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6l4-4 4 4v4.5H2Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+  // The live-v2 additions — outdoors and rendezvous vocabulary. Same rules
+  // as the first six: geometric strokes, legible at 12px on a phone outdoors.
+  tent: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 10.5 6 2l4.5 8.5Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6 5.5v5" stroke="currentColor" stroke-width="1.2"/></svg>',
+  water:
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5C7.8 4 9.5 6 9.5 8a3.5 3.5 0 0 1-7 0c0-2 1.7-4 3.5-6.5Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+  danger:
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 1 3 6.5h2.5L4.5 11 9 5.5H6.5Z" fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round"/></svg>',
+  meet: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="4" cy="4" r="1.8" fill="currentColor"/><circle cx="8.6" cy="4.6" r="1.5" fill="currentColor"/><path d="M1.5 10.5c0-1.8 1.1-3 2.7-3s2.6 1.2 2.6 3Z" fill="currentColor"/><path d="M7.2 10.5c.1-1.5 1-2.5 2.2-2.5 1 0 1.8.9 1.9 2.5Z" fill="currentColor"/></svg>',
+  dog: '<svg viewBox="0 0 12 12" aria-hidden="true"><ellipse cx="6" cy="8.4" rx="2.4" ry="1.9" fill="currentColor"/><circle cx="2.6" cy="5.4" r="1.1" fill="currentColor"/><circle cx="4.9" cy="3.4" r="1.1" fill="currentColor"/><circle cx="7.4" cy="3.4" r="1.1" fill="currentColor"/><circle cx="9.6" cy="5.4" r="1.1" fill="currentColor"/></svg>',
+  camera:
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="3.5" width="9" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.2 3.5 5 2h2l.8 1.5" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><circle cx="6" cy="6.7" r="1.7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
+  boat: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 7.5h9L9 10.2H3Z" fill="currentColor"/><path d="M6.2 1.5v6M6.2 2.2 9.4 6.5H6.2" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>',
+  tree: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 3.2 4.8h1.2L2.5 7.8h2.6v2.7h1.8V7.8h2.6L7.6 4.8h1.2Z" fill="currentColor" stroke-linejoin="round"/></svg>',
 };
 
 /** The icon chooser — shared by the share sheet and the live room. */
@@ -158,20 +227,74 @@ export function MarkerIconPicker({
   );
 }
 
-function placedIcon(label: string | undefined, icon: MarkerIcon | undefined): L.DivIcon {
+function placedIcon(
+  label: string | undefined,
+  icon: MarkerIcon | undefined,
+  name: string | undefined,
+): L.DivIcon {
   let inner: string;
-  if (icon !== undefined && MARKER_GLYPHS[icon] !== undefined) {
-    inner = `<span class="placed-marker-glyph">${MARKER_GLYPHS[icon]}</span>`;
+  if (icon !== undefined) {
+    // A newer sender may name an icon this build has never heard of; the
+    // contract's fallback is a plain spot, never a broken diamond.
+    inner = `<span class="placed-marker-glyph">${MARKER_GLYPHS[icon] ?? MARKER_GLYPHS.spot}</span>`;
   } else {
     const first = (label ?? '').trim().charAt(0).toUpperCase();
     const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
     inner = `<span>${initial}</span>`;
   }
+  const trimmedName = (name ?? '').trim();
+  const chip = trimmedName !== '' ? `<span class="marker-name">${escapeHtml(trimmedName)}</span>` : '';
   return L.divIcon({
     className: 'placed-marker-icon',
-    html: `<span class="placed-marker">${inner}</span>`,
+    html: `<span class="placed-wrap"><span class="placed-marker">${inner}</span>${chip}</span>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  });
+}
+
+/** The label chip at a zone's centre — name plus, when removable, a ×. */
+function zoneChipIcon(name: string, removable: boolean): L.DivIcon {
+  const x = removable
+    ? '<button type="button" class="zone-x" aria-label="Remove this zone">&#215;</button>'
+    : '';
+  return L.divIcon({
+    className: 'zone-chip-icon',
+    html: `<span class="zone-chip">${escapeHtml(name)}${x}</span>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  });
+}
+
+/**
+ * Wire the × inside a zone chip to its remove callback. Runs after the chip
+ * is added (or re-iconed) — setIcon replaces the DOM element, so the wiring
+ * has to chase it. Clicks on the chip must never fall through to the map,
+ * where they would place a marker or move the pin.
+ */
+function wireZoneChip(
+  chip: L.Marker,
+  id: string,
+  removes: { current: Record<string, (() => void) | undefined> },
+): void {
+  const element = chip.getElement();
+  if (element === undefined) return;
+  L.DomEvent.disableClickPropagation(element);
+  const x = element.querySelector('.zone-x');
+  if (x !== null) {
+    L.DomEvent.on(x as HTMLElement, 'click', (event) => {
+      L.DomEvent.stop(event);
+      removes.current[id]?.();
+    });
+  }
+}
+
+/** The transient "said something" bubble, anchored just above a dot. */
+function chatFlagIcon(): L.DivIcon {
+  return L.divIcon({
+    className: 'chat-flag-icon',
+    html: '<span class="chat-flag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-4 4v-4H4Z" fill="currentColor"/></svg></span>',
     iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    iconAnchor: [12, 34],
   });
 }
 
@@ -183,8 +306,8 @@ function peerIcon(label: string | undefined, avatar?: string): L.DivIcon {
   return L.divIcon({
     className: 'peer-dot-icon',
     html: `<span class="peer-dot">${img ?? initial}</span>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
   });
 }
 
@@ -264,6 +387,26 @@ export interface MapProps {
   remoteSketches?: Array<{ id: string; sketch: Sketch }>;
   /** Placed points from the live room, drawn as initialled diamonds. */
   placedMarkers?: PlacedMarker[];
+  /** Named zones from the live room — dashed circles with a label chip. */
+  zones?: MapZone[];
+  /** Transient chat bubbles over participants who just said something. */
+  chatFlags?: MapChatFlag[];
+  /** Tapping any chat bubble — opens the chat panel. */
+  onChatFlagTap?: () => void;
+  /** One participant's recent path, drawn faintly while their card is open. */
+  focusTrail?: Array<[number, number]> | null;
+  /** Tapping the blue pin — the pin is a participant too, in a live room. */
+  onPinTap?: () => void;
+  /**
+   * When set, the circle tool draws ZONES instead of sketch ink: a committed
+   * circle is handed here (with a zoom-derived placement accuracy) rather
+   * than added to the sketch, and the parent prompts for a name.
+   */
+  onZoneDraw?: (center: { lat: number; lon: number }, radiusM: number, accuracyM: number) => void;
+  /** The session is at its zone cap — the circle tool disables, quietly. */
+  zonesFull?: boolean;
+  /** This participant is at their marker cap — the point tool disables. */
+  markersFull?: boolean;
   /**
    * Adds a place-a-point tool to the toolbar: tap the tool, tap the map, the
    * point lands there and the tool puts itself down. Fires with a placement
@@ -327,6 +470,14 @@ export function Map({
   peers,
   remoteSketches,
   placedMarkers,
+  zones,
+  chatFlags,
+  onChatFlagTap,
+  focusTrail = null,
+  onPinTap,
+  onZoneDraw,
+  zonesFull = false,
+  markersFull = false,
   onPlaceMarker,
   markerOnClick = false,
   moveOnClick = true,
@@ -383,11 +534,22 @@ export function Map({
   const viewerCircleRef = useRef<L.Circle | null>(null);
   // Records, not Maps — the global Map is shadowed by this component's name.
   const peerLayersRef = useRef<Record<string, { marker: L.Marker; circle: L.Circle; face: string }>>({});
+  const peerTapsRef = useRef<Record<string, (() => void) | undefined>>({});
   const remoteSketchesRef = useRef<Record<string, SketchHandle>>({});
-  const placedLayersRef = useRef<Record<string, L.Marker>>({});
+  const placedLayersRef = useRef<Record<string, { marker: L.Marker; key: string; popup: string }>>({});
   const placedTapsRef = useRef<Record<string, (() => void) | undefined>>({});
+  const zoneLayersRef = useRef<Record<string, { circle: L.Circle; chip: L.Marker; key: string }>>({});
+  const zoneRemovesRef = useRef<Record<string, (() => void) | undefined>>({});
+  const chatFlagLayersRef = useRef<Record<string, L.Marker>>({});
+  const focusTrailRef = useRef<L.Polyline | null>(null);
   const onPlaceMarkerRef = useRef(onPlaceMarker);
   onPlaceMarkerRef.current = onPlaceMarker;
+  const onZoneDrawRef = useRef(onZoneDraw);
+  onZoneDrawRef.current = onZoneDraw;
+  const onPinTapRef = useRef(onPinTap);
+  onPinTapRef.current = onPinTap;
+  const onChatFlagTapRef = useRef(onChatFlagTap);
+  onChatFlagTapRef.current = onChatFlagTap;
 
   useEffect(() => {
     if (containerRef.current === null) return;
@@ -419,12 +581,15 @@ export function Map({
       markerRef.current = null;
       circleRef.current = null;
       trailRef.current = null;
+      focusTrailRef.current = null;
       sketchHandleRef.current = null;
       viewerMarkerRef.current = null;
       viewerCircleRef.current = null;
       peerLayersRef.current = {};
       remoteSketchesRef.current = {};
       placedLayersRef.current = {};
+      zoneLayersRef.current = {};
+      chatFlagLayersRef.current = {};
       fittedContentRef.current = false;
     };
     // Created once per mount; position changes are handled by the effect below.
@@ -456,6 +621,10 @@ export function Map({
         onMoveRef.current?.(newLat, lng, placementAccuracy(newLat, map.getZoom()));
       });
 
+      // The pin is a participant too in a live room — tapping it opens their
+      // card, exactly like tapping a peer dot.
+      marker.on('click', () => onPinTapRef.current?.());
+
       markerRef.current = marker;
     } else {
       markerRef.current.setLatLng([lat, lon]);
@@ -486,8 +655,35 @@ export function Map({
       } else {
         trailRef.current.setLatLngs(trail);
       }
+    } else if (trailRef.current !== null) {
+      // A trail that empties must leave the map — without this branch the
+      // last polyline lingered forever once drawn.
+      trailRef.current.remove();
+      trailRef.current = null;
     }
   }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin, pinAvatar]);
+
+  // One participant's recent path, shown faintly while their card is open.
+  // Neutral slate and dotted: it is history, not a live position or a claim.
+  useEffect(() => {
+    if (map === null) return;
+    if (focusTrail !== null && focusTrail.length > 1) {
+      if (focusTrailRef.current === null) {
+        focusTrailRef.current = L.polyline(focusTrail, {
+          color: '#475569',
+          weight: 3,
+          opacity: 0.5,
+          dashArray: '1 7',
+          lineCap: 'round',
+        }).addTo(map);
+      } else {
+        focusTrailRef.current.setLatLngs(focusTrail);
+      }
+    } else if (focusTrailRef.current !== null) {
+      focusTrailRef.current.remove();
+      focusTrailRef.current = null;
+    }
+  }, [map, focusTrail]);
 
   // Sync the committed sketch. Same shape as the marker effect above, and its
   // handle is nulled in the same teardown, for the same StrictMode reason.
@@ -528,15 +724,25 @@ export function Map({
     const seen = new Set<string>();
     for (const peer of peers ?? []) {
       seen.add(peer.id);
+      peerTapsRef.current[peer.id] = peer.onTap;
       const at: [number, number] = [peer.position.lat, peer.position.lon];
       const existing = layers[peer.id];
       // Icons carry the label and avatar, so a change to either re-renders
       // the dot rather than leaving a stale face on a renamed peer.
       const face = `${peer.label ?? ''}|${peer.avatar ?? ''}`;
       if (existing === undefined) {
+        const created = L.marker(at, {
+          icon: peerIcon(peer.label, peer.avatar),
+          interactive: peer.onTap !== undefined,
+          keyboard: false,
+        }).addTo(map);
+        if (peer.onTap !== undefined) {
+          const id = peer.id;
+          created.on('click', () => peerTapsRef.current[id]?.());
+        }
         layers[peer.id] = {
           face,
-          marker: L.marker(at, { icon: peerIcon(peer.label, peer.avatar), interactive: false, keyboard: false }).addTo(map),
+          marker: created,
           circle: L.circle(at, {
             radius: peer.position.accuracyM,
             color: PEER_COLOUR,
@@ -583,7 +789,9 @@ export function Map({
     }
   }, [map, remoteSketches]);
 
-  // Sync the placed markers.
+  // Sync the placed markers. Icons and popups are only rebuilt when their
+  // content changes — the list identity churns on every roster frame, and
+  // re-binding a popup would slam it shut under the reader.
   useEffect(() => {
     if (map === null) return;
     const layers = placedLayersRef.current;
@@ -592,21 +800,106 @@ export function Map({
       seen.add(placed.id);
       placedTapsRef.current[placed.id] = placed.onTap;
       const at: [number, number] = [placed.position.lat, placed.position.lon];
+      const key = `${placed.label ?? ''}|${placed.icon ?? ''}|${placed.name ?? ''}`;
+      const popup = placed.popupHtml ?? '';
       const existing = layers[placed.id];
       if (existing === undefined) {
         const created = L.marker(at, {
-          icon: placedIcon(placed.label, placed.icon),
-          interactive: placed.onTap !== undefined,
+          icon: placedIcon(placed.label, placed.icon, placed.name),
+          interactive: placed.onTap !== undefined || popup !== '',
           keyboard: false,
         }).addTo(map);
         if (placed.onTap !== undefined) {
           const id = placed.id;
           created.on('click', () => placedTapsRef.current[id]?.());
         }
-        layers[placed.id] = created;
+        if (popup !== '') created.bindPopup(popup);
+        layers[placed.id] = { marker: created, key, popup };
+      } else {
+        existing.marker.setLatLng(at);
+        if (existing.key !== key) {
+          existing.marker.setIcon(placedIcon(placed.label, placed.icon, placed.name));
+          existing.key = key;
+        }
+        if (existing.popup !== popup) {
+          existing.marker.unbindPopup();
+          if (popup !== '') existing.marker.bindPopup(popup);
+          existing.popup = popup;
+        }
+      }
+    }
+    for (const id of Object.keys(layers)) {
+      if (!seen.has(id)) {
+        layers[id]!.marker.remove();
+        delete layers[id];
+      }
+    }
+  }, [map, placedMarkers]);
+
+  // Sync the zones — dashed neutral circles with a label chip at the centre.
+  useEffect(() => {
+    if (map === null) return;
+    const layers = zoneLayersRef.current;
+    const seen = new Set<string>();
+    for (const zone of zones ?? []) {
+      seen.add(zone.id);
+      zoneRemovesRef.current[zone.id] = zone.onRemove;
+      const at: [number, number] = [zone.center.lat, zone.center.lon];
+      const key = `${zone.name}|${zone.onRemove !== undefined ? 'x' : ''}`;
+      const existing = layers[zone.id];
+      if (existing === undefined) {
+        const circle = L.circle(at, {
+          radius: zone.radiusM,
+          color: '#475569',
+          weight: 2.5,
+          dashArray: '7 7',
+          fillColor: '#475569',
+          fillOpacity: 0.06,
+          interactive: false,
+        }).addTo(map);
+        const chip = L.marker(at, {
+          icon: zoneChipIcon(zone.name, zone.onRemove !== undefined),
+          interactive: true,
+          keyboard: false,
+        }).addTo(map);
+        wireZoneChip(chip, zone.id, zoneRemovesRef);
+        layers[zone.id] = { circle, chip, key };
+      } else {
+        existing.circle.setLatLng(at);
+        existing.circle.setRadius(zone.radiusM);
+        existing.chip.setLatLng(at);
+        if (existing.key !== key) {
+          existing.chip.setIcon(zoneChipIcon(zone.name, zone.onRemove !== undefined));
+          wireZoneChip(existing.chip, zone.id, zoneRemovesRef);
+          existing.key = key;
+        }
+      }
+    }
+    for (const id of Object.keys(layers)) {
+      if (!seen.has(id)) {
+        layers[id]!.circle.remove();
+        layers[id]!.chip.remove();
+        delete layers[id];
+      }
+    }
+  }, [map, zones]);
+
+  // Sync the transient chat bubbles. Their lifetime belongs to the parent;
+  // this effect only mirrors the list.
+  useEffect(() => {
+    if (map === null) return;
+    const layers = chatFlagLayersRef.current;
+    const seen = new Set<string>();
+    for (const flag of chatFlags ?? []) {
+      seen.add(flag.id);
+      const at: [number, number] = [flag.position.lat, flag.position.lon];
+      const existing = layers[flag.id];
+      if (existing === undefined) {
+        const created = L.marker(at, { icon: chatFlagIcon(), keyboard: false }).addTo(map);
+        created.on('click', () => onChatFlagTapRef.current?.());
+        layers[flag.id] = created;
       } else {
         existing.setLatLng(at);
-        existing.setIcon(placedIcon(placed.label, placed.icon));
       }
     }
     for (const id of Object.keys(layers)) {
@@ -615,7 +908,7 @@ export function Map({
         delete layers[id];
       }
     }
-  }, [map, placedMarkers]);
+  }, [map, chatFlags]);
 
   // The marker tool — and, where markerOnClick says so, the plain tap: the
   // point lands, the tool (if one was up) puts itself down.
@@ -778,6 +1071,19 @@ export function Map({
       const shape = commitShape(finished, inkRef.current, metres);
       if (shape === null) return; // a tap, a twitch — not a drawing
 
+      // In a live room a circle is a ZONE, not ink — hand it to the parent
+      // to be named. The circle's own radius is its extent; the accuracy is
+      // how finely the centre could be pointed at this zoom.
+      if (shape.kind === 'circle' && onZoneDrawRef.current !== undefined) {
+        onZoneDrawRef.current(
+          { lat: shape.centre.lat, lon: shape.centre.lon },
+          shape.radiusM,
+          placementAccuracy(shape.centre.lat, map.getZoom()),
+        );
+        setActiveTool('none');
+        return;
+      }
+
       const base = sketchRef.current ?? { anchor: anchorRef.current, shapes: [] };
       const next = withShapeIfItFits(base, shape);
       if (next === null) {
@@ -883,13 +1189,14 @@ export function Map({
     setActiveTool((current) => (current === tool ? 'none' : tool));
   };
 
-  const toolButton = (tool: DrawTool, label: string, icon: JSX.Element) => (
+  const toolButton = (tool: DrawTool, label: string, icon: JSX.Element, disabled = false) => (
     <button
       type="button"
       className={`map-tool ${activeTool === tool ? 'map-tool-active' : ''}`}
       aria-label={label}
       aria-pressed={activeTool === tool}
       title={label}
+      disabled={disabled}
       onClick={() => pickTool(tool)}
     >
       {icon}
@@ -970,6 +1277,18 @@ export function Map({
         </p>
       )}
 
+      {toolsOpen && onZoneDraw !== undefined && zonesFull && (
+        <p className="map-tools-note">
+          This session has all {MAX_SESSION_ZONES} zones. Remove one to draw another.
+        </p>
+      )}
+
+      {toolsOpen && onPlaceMarker !== undefined && markersFull && (
+        <p className="map-tools-note">
+          You have placed all {MAX_SESSION_MARKERS} of your markers. Remove one to place another.
+        </p>
+      )}
+
       {onSketchChange !== undefined && (
         <div className="map-tools" role="toolbar" aria-label="Drawing tools">
           {!toolsOpen ? (
@@ -1002,7 +1321,12 @@ export function Map({
               </button>
               {toolButton('pen', 'Draw freehand', <PenIcon />)}
               {toolButton('arrow', 'Draw an arrow', <ArrowIcon />)}
-              {toolButton('circle', 'Draw a circle', <CircleIcon />)}
+              {toolButton(
+                'circle',
+                onZoneDraw !== undefined ? 'Draw a zone' : 'Draw a circle',
+                <CircleIcon />,
+                onZoneDraw !== undefined && zonesFull,
+              )}
               {onPlaceMarker !== undefined && (
                 <button
                   type="button"
@@ -1010,6 +1334,7 @@ export function Map({
                   aria-label="Place a point"
                   aria-pressed={activeTool === 'marker'}
                   title="Place a point"
+                  disabled={markersFull}
                   onClick={() => {
                     setInkOpen(false);
                     setActiveTool((current) => (current === 'marker' ? 'none' : 'marker'));

@@ -4,6 +4,7 @@ import { Resolve } from './Resolve.jsx';
 import { Brand } from './Brand.jsx';
 import { AccountProvider, useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
+import { SessionMap } from './SessionMap.jsx';
 
 type Route = 'share' | 'lookup';
 
@@ -63,6 +64,30 @@ function AppShell() {
     // Tells the browser which scrollbar and form-control palette to use.
     document.documentElement.style.colorScheme = theme === 'theme-console' ? 'dark' : '';
   }, [theme]);
+
+  // Dev builds only (dead-code-eliminated from production): mounts the live
+  // room with no session behind it, so its UI can be exercised and
+  // screenshotted by feeding frames through window.__liveHandlers.
+  // /dev-live is the public surface; /lookup/dev-live the console one.
+  if (import.meta.env.DEV && window.location.pathname.includes('dev-live')) {
+    const params = new URLSearchParams(window.location.search);
+    return (
+      <div className="app">
+        <main className="main">
+          <SessionMap
+            code="DEVDEV00"
+            displayCode="DEVD-EV00"
+            role={params.get('role') === 'joiner' ? 'joiner' : 'owner'}
+            share={params.get('watch') !== '1'}
+            tiles={route === 'lookup' ? 'dark' : 'voyager'}
+            name={params.get('name') ?? 'Dev'}
+            initialPosition={{ lat: 51.50809, lon: -0.12789, accuracyM: 12 }}
+            onLeave={() => window.history.back()}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app">

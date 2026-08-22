@@ -1,7 +1,9 @@
 import type {
   CreateSessionResponse,
+  MarkerIcon,
   Position,
   ResolvedSession,
+  SessionMarker,
   SessionMode,
   SessionSubject,
 } from '@whereareyou/protocol';
@@ -86,8 +88,12 @@ export interface MintOptions {
   ttlSeconds?: number;
   /** Encoded sketch (see the protocol's sketch codec). Opaque to the server. */
   sketch?: string;
-  /** The spot the sharer marked — not where they are. */
+  /** LEGACY single-marker mirror — sent beside `markers` for old servers;
+      a v2 server ignores it when `markers` is present. */
   marker?: Position;
+  markerIcon?: MarkerIcon;
+  /** All the spots the sharer marked — not where they are. Authoritative. */
+  markers?: SessionMarker[];
 }
 
 export function mintSession(options: MintOptions): Promise<ApiResult<CreateSessionResponse>> {

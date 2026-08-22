@@ -5,14 +5,15 @@ import {
   formatOfflineCode,
   interpretCode,
   type OfflinePosition,
+  type SessionMarker,
 } from '@whereareyou/protocol';
 import { resolveSession, type ResolvedWithWarning } from './api.js';
 import { useAccount } from './AccountContext.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { SessionMap } from './SessionMap.jsx';
 import { useConnectivity } from './connectivity.js';
-import { Map } from './Map.jsx';
-import { OpenInMaps } from './OpenInMaps.jsx';
+import { Map, escapeHtml } from './Map.jsx';
+import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, timeRemaining } from './formats.js';
 
@@ -158,7 +159,9 @@ export function Resolve() {
     sessionStorage.setItem('resolverKey', value);
   }, []);
 
-  // Joined: the room takes the whole screen until they leave.
+  // Joined: the room takes the whole screen until they leave. This is the
+  // console surface, so the live map keeps its dark tiles; a watcher
+  // (share: false — the dispatcher's posture) gets a read-only chat panel.
   if (session !== null && live !== null) {
     return (
       <SessionMap
@@ -166,6 +169,7 @@ export function Resolve() {
         displayCode={formatCode(session.code)}
         role="joiner"
         share={live.share}
+        tiles="dark"
         {...(live.name !== '' ? { name: live.name } : {})}
         {...(account.avatar !== null ? { avatar: account.avatar } : {})}
         initialPosition={session.position}
@@ -386,6 +390,16 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
     [session.sketch],
   );
 
+  // Everything the caller marked. An old server sends only the legacy single
+  // marker; the mirror rule makes it markers[0] here.
+  const markers = useMemo<SessionMarker[]>(() => {
+    if (session.markers !== undefined) return session.markers;
+    if (session.marker !== undefined) {
+      return [{ id: 'legacy', position: session.marker, icon: session.markerIcon ?? 'spot' }];
+    }
+    return [];
+  }, [session.markers, session.marker, session.markerIcon]);
+
   const cadLine = `${formats.latLon} (±${Math.round(position.accuracyM)}m, ${position.source})${
     formats.osGridRef !== null ? ` [${formats.osGridRef}]` : ''
   }`;
@@ -415,11 +429,24 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         allowFullscreen
         showViewerLocation
         viewerAvatar={account.avatar}
-        {...(session.marker !== undefined
+        {...(markers.length > 0
           ? {
-              placedMarkers: [
-                { id: 'caller-marker', label: 'Spot', position: session.marker, icon: session.markerIcon },
-              ],
+              placedMarkers: markers.map((marker) => {
+                const title = (marker.name ?? '').trim();
+                const url = openInMapsUrl(
+                  marker.position.lat,
+                  marker.position.lon,
+                  title !== '' ? title : 'Marked spot',
+                );
+                return {
+                  id: marker.id,
+                  label: 'Spot',
+                  name: marker.name,
+                  position: marker.position,
+                  icon: marker.icon,
+                  popupHtml: `${title !== '' ? `<strong>${escapeHtml(title)}</strong><br/>` : ''}<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open in maps</a>`,
+                };
+              }),
             }
           : {})}
       />
@@ -440,10 +467,11 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         })}
       />
 
-      {session.marker !== undefined && (
+      {markers.length > 0 && (
         <p className="sketch-provenance">
-          <strong>The caller marked a spot.</strong> The diamond is somewhere they pointed out —
-          not where they are.
+          <strong>The caller marked {markers.length === 1 ? 'a spot' : `${markers.length} spots`}.</strong>{' '}
+          {markers.length === 1 ? 'The diamond is' : 'The diamonds are'} somewhere they pointed
+          out — not where they are.
         </p>
       )}
 

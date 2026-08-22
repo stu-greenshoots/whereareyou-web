@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
-import type { CreateSessionResponse, MarkerIcon, Position, SessionMode, Sketch } from '@whereareyou/protocol';
+import type { CreateSessionResponse, MarkerIcon, Position, SessionMarker, SessionMode, Sketch } from '@whereareyou/protocol';
 import { mintSession, revokeSession, upgradeToLive } from './api.js';
 import { useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
@@ -10,7 +10,7 @@ import { Map, MarkerIconPicker } from './Map.jsx';
 import { OpenInMaps } from './OpenInMaps.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap } from './SessionMap.jsx';
-import { connectLive } from './live.js';
+import { connectLive, newLiveId } from './live.js';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
 
@@ -112,9 +112,20 @@ interface ActiveShare {
   /** The owner's drawing, encoded — restored on resume so a reload never
       quietly loses what was drawn against a still-live code. */
   sketch: string | null;
-  /** The marked spot, likewise. */
+  /** LEGACY single-marker mirror of markers[0] — kept so an entry written by
+      an older build still restores, and written on save for the same reason. */
   marker: Position | null;
   markerIcon: MarkerIcon;
+  /** All placed markers. The source of truth since live v2. */
+  markers?: SessionMarker[];
+}
+
+/** The marker list of a stored share, however old the entry. */
+function activeShareMarkers(entry: ActiveShare): SessionMarker[] {
+  if (Array.isArray(entry.markers)) return entry.markers;
+  return entry.marker !== null && entry.marker !== undefined
+    ? [{ id: newLiveId(), position: entry.marker, icon: entry.markerIcon ?? 'spot' }]
+    : [];
 }
 
 const ACTIVE_KEY = 'activeShare';
@@ -200,9 +211,10 @@ export function Share() {
   const [note, setNote] = useState('');
   /** The caller's drawing. Anchored at the pin when the first shape lands. */
   const [sketch, setSketch] = useState<Sketch | null>(null);
-  /** The spot the caller MARKED — "it's here" — never where they are. */
-  const [marker, setMarker] = useState<Position | null>(null);
-  const [markerIcon, setMarkerIcon] = useState<MarkerIcon>('spot');
+  /** The spots the caller MARKED — "it's here" — never where they are.
+      Pre-mint the flow places at most one; a live room can grow it to the
+      protocol cap, and this list is what rides the mint and the resume. */
+  const [markers, setMarkers] = useState<SessionMarker[]>([]);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   /** Requested lifetime of the code. The server clamps it regardless. */
   const [ttl, setTtl] = useState(1800);
@@ -210,12 +222,18 @@ export function Share() {
   const [shareName, setShareName] = useState('');
   /** The owner's live map is open over the code screen. */
   const [liveOpen, setLiveOpen] = useState(false);
-  const adoptLiveMarker = useCallback((next: Position | null, icon: MarkerIcon) => {
-    setMarker(next);
-    setMarkerIcon(icon);
+  /** Markers placed IN the live map survive leaving it and reloading. */
+  const adoptLiveMarkers = useCallback((next: SessionMarker[]) => {
+    setMarkers(next);
     setResumable((current) => {
       if (current === null) return current;
-      const updated = { ...current, marker: next, markerIcon: icon };
+      // The legacy mirror rides along so an older build can still restore.
+      const updated: ActiveShare = {
+        ...current,
+        markers: next,
+        marker: next[0]?.position ?? null,
+        markerIcon: next[0]?.icon ?? 'spot',
+      };
       persistActiveShare(updated);
       return updated;
     });
@@ -246,10 +264,8 @@ export function Share() {
   sheetPanelRef.current = sheetPanel;
   const sketchRef = useRef(sketch);
   sketchRef.current = sketch;
-  const markerRef = useRef(marker);
-  markerRef.current = marker;
-  const markerIconRef = useRef(markerIcon);
-  markerIconRef.current = markerIcon;
+  const markersRef = useRef(markers);
+  markersRef.current = markers;
   /** Where the flow is, coarsely — drives what Back means right now. */
   const phaseGroupRef = useRef<'start' | 'placed' | 'done'>('start');
   const [history, setHistory] = useState<PastShare[]>(loadHistory);
@@ -369,8 +385,8 @@ export function Share() {
         name: shareName.trim(),
         note: note.trim(),
         sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
-        marker,
-        markerIcon,
+        marker: markers[0]?.position ?? null,
+        ...(markers[0] !== undefined ? { markerIcon: markers[0].icon } : {}),
         thirdParty,
         at: Date.now(),
       };
@@ -380,7 +396,7 @@ export function Share() {
         return next;
       });
     },
-    [note, sketch, marker, markerIcon, thirdParty, shareName],
+    [note, sketch, markers, thirdParty, shareName],
   );
 
   const clearHistory = useCallback(() => {
@@ -478,8 +494,11 @@ export function Share() {
       setShareName(entry.name ?? '');
       setNote(entry.note);
       setSketch(entry.sketch !== null ? decodeSketch(entry.sketch) : null);
-      setMarker(entry.marker ?? null);
-      setMarkerIcon(entry.markerIcon ?? 'spot');
+      setMarkers(
+        entry.marker !== null && entry.marker !== undefined
+          ? [{ id: newLiveId(), position: entry.marker, icon: entry.markerIcon ?? 'spot' }]
+          : [],
+      );
       setPhase({
         name: 'located',
         position: {
@@ -506,8 +525,11 @@ export function Share() {
     setShareName(saved.name);
     setNote(saved.note);
     setSketch(saved.sketch !== null ? decodeSketch(saved.sketch) : null);
-    setMarker(saved.marker ?? null);
-    setMarkerIcon(saved.markerIcon ?? 'spot');
+    setMarkers(
+      saved.marker !== null && saved.marker !== undefined
+        ? [{ id: newLiveId(), position: saved.marker, icon: saved.markerIcon ?? 'spot' }]
+        : [],
+    );
     setPhase({
       name: 'located',
       position: {
@@ -549,11 +571,12 @@ export function Share() {
       // A live share moves the pin to wherever the caller really is. A pin
       // that was placed BY HAND is a claim about somewhere else, so it must
       // survive as its own marked spot — without this, the first live fix
-      // replaces the one place the caller chose to share.
-      let liveMarker = marker;
-      if (mode === 'live' && marker === null && position.source === 'manual') {
-        liveMarker = position;
-        setMarker(position);
+      // replaces the one place the caller chose to share. Since live v2 that
+      // promoted pin is simply markers[0].
+      let mintMarkers = markers;
+      if (mode === 'live' && markers.length === 0 && position.source === 'manual') {
+        mintMarkers = [{ id: newLiveId(), position, icon: 'spot' }];
+        setMarkers(mintMarkers);
       }
 
       // The drawing rides the mint, but must never cost it: if encoding
@@ -567,6 +590,9 @@ export function Share() {
         }
       }
 
+      // `markers` is authoritative; the legacy single-marker mirror rides
+      // beside it so a v1 server (which ignores unknown fields) still gets
+      // the marked spot. A v2 server ignores the mirror, per the contract.
       const result = await mintSession({
         position,
         mode,
@@ -574,7 +600,9 @@ export function Share() {
         ttlSeconds: ttl,
         ...(note.trim() !== '' ? { note: note.trim() } : {}),
         ...(sketchPayload !== undefined ? { sketch: sketchPayload } : {}),
-        ...(liveMarker !== null ? { marker: liveMarker, markerIcon } : {}),
+        ...(mintMarkers.length > 0
+          ? { markers: mintMarkers, marker: mintMarkers[0]!.position, markerIcon: mintMarkers[0]!.icon }
+          : {}),
       });
 
       if (!result.ok) {
@@ -603,14 +631,15 @@ export function Share() {
         mode,
         position,
         sketch: sketchPayload ?? null,
-        marker: liveMarker,
-        markerIcon,
+        marker: mintMarkers[0]?.position ?? null,
+        markerIcon: mintMarkers[0]?.icon ?? 'spot',
+        markers: mintMarkers,
       };
       setResumable(active);
       persistActiveShare(active);
       setPhase({ name: 'shared', position, session: result.data, spokenOfflineCode });
     },
-    [mode, thirdParty, note, sketch, marker, markerIcon, ttl, fallToOfflineCode, recordShare, reportReachable, reportUnreachable],
+    [mode, thirdParty, note, sketch, markers, ttl, fallToOfflineCode, recordShare, reportReachable, reportUnreachable],
   );
 
   const share = useCallback(() => {
@@ -662,7 +691,7 @@ export function Share() {
         // An unencodable sketch stays local.
       }
     }
-    if (markerRef.current !== null) handle.sendMarker(markerRef.current, markerIconRef.current);
+    if (markersRef.current.length > 0) handle.sendMarkers(markersRef.current);
     watchRef.current = navigator.geolocation.watchPosition(
       (fix) => {
         handle.sendPosition({
@@ -693,8 +722,7 @@ export function Share() {
     setStopFailure(null);
     setKeepingOfflineCode(false);
     setSketch(null);
-    setMarker(null);
-    setMarkerIcon('spot');
+    setMarkers([]);
     setIconPickerOpen(false);
     setLiveOpen(false);
     setLiveError(null);
@@ -767,10 +795,9 @@ export function Share() {
         {...(account.avatar !== null ? { avatar: account.avatar } : {})}
         initialPosition={phase.position}
         initialSketch={sketch}
-        initialMarker={marker}
-        initialMarkerIcon={markerIcon}
+        initialMarkers={markers}
         onSketchShared={adoptLiveSketch}
-        onMarkerShared={adoptLiveMarker}
+        onMarkersShared={adoptLiveMarkers}
         onLeave={() => setLiveOpen(false)}
       />
     );
@@ -808,17 +835,16 @@ export function Share() {
           fullscreenLocked
           className="map map-fill"
           moveOnClick={false}
-          {...(located && marker !== null
+          {...(located && markers.length > 0
             ? {
-                placedMarkers: [
-                  {
-                    id: 'my-marker',
-                    label: shareName.trim() !== '' ? shareName.trim() : 'Spot',
-                    position: marker,
-                    icon: markerIcon,
-                    onTap: () => setIconPickerOpen(true),
-                  },
-                ],
+                placedMarkers: markers.map((m) => ({
+                  id: m.id,
+                  label: shareName.trim() !== '' ? shareName.trim() : 'Spot',
+                  name: m.name,
+                  position: m.position,
+                  icon: m.icon,
+                  onTap: () => setIconPickerOpen(true),
+                })),
               }
             : {})}
           {...(located
@@ -828,14 +854,23 @@ export function Share() {
                 markerOnClick: true,
                 onPlaceMarker: (lat: number, lon: number, accuracyM: number) => {
                   // A tap is "the spot I mean is HERE" — the pin is a person
-                  // and taps never move people.
-                  setMarker({
-                    lat,
-                    lon,
-                    accuracyM,
-                    source: 'manual',
-                    takenAt: new Date().toISOString(),
-                  });
+                  // and taps never move people. Pre-mint the flow keeps ONE
+                  // spot (a moved tap replaces it, keeping its id); a live
+                  // room is where the list grows.
+                  setMarkers((current) => [
+                    {
+                      id: current[0]?.id ?? newLiveId(),
+                      position: {
+                        lat,
+                        lon,
+                        accuracyM,
+                        source: 'manual',
+                        takenAt: new Date().toISOString(),
+                      },
+                      icon: current[0]?.icon ?? 'spot',
+                      ...(current[0]?.name !== undefined ? { name: current[0].name } : {}),
+                    },
+                  ]);
                 },
                 // A hand-placed pin is a deliberate choice, not a sensor
                 // guess — its accuracy comes from the zoom, which the Map
@@ -861,15 +896,17 @@ export function Share() {
             located ? (
               <LocatedSheet
                 position={phase.position}
-                marker={marker}
-                markerIcon={markerIcon}
+                marker={markers[0]?.position ?? null}
+                markerIcon={markers[0]?.icon ?? 'spot'}
                 iconPickerOpen={iconPickerOpen}
                 onPickIcon={(icon) => {
-                  setMarkerIcon(icon);
+                  setMarkers((current) =>
+                    current.length > 0 ? [{ ...current[0]!, icon }, ...current.slice(1)] : current,
+                  );
                   setIconPickerOpen(false);
                 }}
                 onRemoveMarker={() => {
-                  setMarker(null);
+                  setMarkers([]);
                   setIconPickerOpen(false);
                 }}
                 minting={phase.name === 'minting'}
@@ -922,8 +959,7 @@ export function Share() {
                       onClick={() => {
                         setMode(resumable.mode);
                         setSketch(resumable.sketch !== null ? decodeSketch(resumable.sketch) : null);
-                        setMarker(resumable.marker ?? null);
-                        setMarkerIcon(resumable.markerIcon ?? 'spot');
+                        setMarkers(activeShareMarkers(resumable));
                         setPhase({
                           name: 'shared',
                           position: resumable.position,
@@ -1028,8 +1064,8 @@ export function Share() {
               accuracyM: phase.position.accuracyM,
               note: note.trim(),
               sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
-              marker,
-              markerIcon,
+              marker: markers[0]?.position ?? null,
+              ...(markers[0] !== undefined ? { markerIcon: markers[0].icon } : {}),
               thirdParty,
               source: 'share',
               code: phase.code,
@@ -1108,10 +1144,10 @@ export function Share() {
                   persistActiveShare(upgraded);
                 }
                 // Same promotion as a live mint: the pin is about to start
-                // following the caller, so a hand-placed spot becomes the
-                // marked spot before the first fix can replace it.
-                if (marker === null && phase.position.source === 'manual') {
-                  adoptLiveMarker(phase.position, markerIcon);
+                // following the caller, so a hand-placed spot becomes
+                // markers[0] before the first fix can replace it.
+                if (markers.length === 0 && phase.position.source === 'manual') {
+                  adoptLiveMarkers([{ id: newLiveId(), position: phase.position, icon: 'spot' }]);
                 }
               }
               setLiveOpen(true);
@@ -1130,8 +1166,8 @@ export function Share() {
           accuracyM: position.accuracyM,
           note: note.trim(),
           sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
-          marker,
-          markerIcon,
+          marker: markers[0]?.position ?? null,
+          ...(markers[0] !== undefined ? { markerIcon: markers[0].icon } : {}),
           thirdParty,
           source: 'share',
           code: session.code,
@@ -1192,8 +1228,16 @@ export function Share() {
         sketch={sketch}
         fitContent
         allowFullscreen
-        {...(marker !== null
-          ? { placedMarkers: [{ id: 'my-marker', label: 'Spot', position: marker, icon: markerIcon }] }
+        {...(markers.length > 0
+          ? {
+              placedMarkers: markers.map((m) => ({
+                id: m.id,
+                label: 'Spot',
+                name: m.name,
+                position: m.position,
+                icon: m.icon,
+              })),
+            }
           : {})}
         fullscreenOverlay={
           <div className="map-sheet map-sheet-code">

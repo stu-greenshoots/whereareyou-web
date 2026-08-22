@@ -619,14 +619,22 @@
 
 .pin-icon { background: none; border: 0; }
 
+/* Participant pins and placed markers use FIXED colours, not theme tokens —
+   they sit on map tiles, and must read identically on Voyager (light) and
+   Dark Matter (dark). The recipe everywhere: a solid fill, a thick white
+   ring, and a dark outline around the ring, so the silhouette survives both
+   pale streets and near-black ones. Shape carries the meaning (circle = a
+   person, diamond = a placed claim); colour only reinforces it. */
 .pin {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: var(--pin-colour);
   border: 3px solid #fff;
-  box-shadow: 0 1px 6px #0007;
+  box-shadow:
+    0 0 0 1.5px #0f172a80,
+    0 2px 8px #0007;
 }
 
 /* Leaflet's own controls sit outside our system; tone them down so they do
@@ -762,7 +770,9 @@
   border-radius: 50%;
   background: #475569;
   border: 2.5px solid #fff;
-  box-shadow: 0 1px 4px #0006;
+  box-shadow:
+    0 0 0 1.5px #0f172a80,
+    0 1px 4px #0006;
 }
 
 
@@ -1055,22 +1065,26 @@ body.map-first .header { display: none; }
 .place-results { max-height: 32dvh; overflow-y: auto; }
 
 /* ---- Live rooms -------------------------------------------------------- */
-/* Another participant: a slate dot with their initial — never a pin. */
+/* Another participant: a slate dot with their initial — never a pin. Same
+   ring-and-outline recipe as the pin, so it reads on both tile sets. */
 .peer-dot {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: #475569;
   color: #fff;
-  border: 2px solid #fff;
+  border: 2.5px solid #fff;
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
-  box-shadow: 0 1px 4px #0006;
+  box-shadow:
+    0 0 0 1.5px #0f172a80,
+    0 2px 6px #0006;
+  overflow: hidden;
 }
 
 .live-bar { align-items: center; }
@@ -1080,26 +1094,55 @@ body.map-first .header { display: none; }
 .join-prompt { display: flex; flex-direction: column; }
 .join-prompt .note-input { margin-top: 8px; }
 
-/* A placed point: a diamond with the placer's initial — a claim about the
-   world, visually nothing like the live dots. */
+/* A placed point: a diamond — a claim about the world, visually nothing
+   like the live dots. Bold slate fill with a white glyph and the same
+   white-ring-plus-dark-outline casing as the person markers: the SHAPE is
+   what separates a claim from a person, never the colour alone. */
+.placed-wrap { position: relative; display: block; width: 28px; height: 28px; }
 .placed-marker {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
+  margin: 3px;
   transform: rotate(45deg);
-  background: #fff;
-  border: 2.5px solid #475569;
+  background: #334155;
+  border: 2.5px solid #fff;
   border-radius: 4px;
-  box-shadow: 0 1px 4px #0006;
+  box-shadow:
+    0 0 0 1.5px #0f172a80,
+    0 2px 6px #0006;
 }
 .placed-marker span {
   transform: rotate(-45deg);
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  color: #475569;
+  color: #fff;
+}
+
+/* The marker's own name, riding under the diamond. Fixed colours — it sits
+   on tiles, both light and dark. */
+.marker-name {
+  position: absolute;
+  top: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #ffffffeb;
+  color: #14161a;
+  border: 1px solid #0f172a40;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
+  box-shadow: 0 1px 4px #0005;
 }
 
 .live-bar-actions { display: flex; gap: 8px; flex-shrink: 0; }
@@ -1128,7 +1171,7 @@ body.map-first .header { display: none; }
   transform: rotate(-45deg);
   width: 12px;
   height: 12px;
-  color: #475569;
+  color: #fff;
 }
 .placed-marker-glyph svg { width: 12px; height: 12px; }
 .icon-pick { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1317,3 +1360,343 @@ body.map-first .header { display: none; }
 .share-stage-account .map-locate { top: 62px; }
 .share-stage-account .map-stack-2 { top: 110px; }
 .share-stage-account .map-stack-3 { top: 158px; }
+
+/* ---- Live v2: zones ----------------------------------------------------
+   The circle itself is drawn by Leaflet (dashed slate); the chip is its
+   name. Fixed colours — chips sit on tiles, light or dark. */
+.zone-chip-icon { background: none; border: 0; }
+.zone-chip {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  max-width: 180px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #ffffffeb;
+  color: #14161a;
+  border: 1.5px dashed #475569;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  box-shadow: 0 1px 4px #0005;
+}
+.zone-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: -2px -4px -2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: #5f6672;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.zone-x:hover { color: #b91c1c; background: #0f172a14; }
+.zone-hint { margin: -8px 0 0; }
+
+/* ---- Live v2: chat bubbles over the map -------------------------------- */
+.chat-flag-icon { background: none; border: 0; }
+.chat-flag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px 6px 6px 1px;
+  background: #ffffff;
+  color: #334155;
+  border: 1.5px solid #0f172a66;
+  box-shadow: 0 1px 5px #0006;
+  cursor: pointer;
+  animation: chat-flag 4s ease forwards;
+}
+.chat-flag svg { width: 14px; height: 14px; }
+@keyframes chat-flag {
+  0% { opacity: 0; transform: translateY(4px); }
+  8% { opacity: 1; transform: translateY(0); }
+  78% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-flag { animation: none; }
+}
+
+/* ---- Live v2: the room panel (chat / activity / people) ----------------
+   A bottom sheet on the phone-shaped screens; on wide screens — the
+   console posture — it docks to the right edge as a side panel. */
+.live-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1150;
+  display: flex;
+  flex-direction: column;
+  max-height: 62dvh;
+  background: var(--surface);
+  border-top: 2px solid var(--rule);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (min-width: 900px) {
+  .live-panel {
+    left: auto;
+    top: 0;
+    width: 380px;
+    max-height: none;
+    border-top: 0;
+    border-left: 2px solid var(--rule);
+  }
+}
+
+.live-panel-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  flex-shrink: 0;
+}
+.live-tab {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.live-tab-active { color: var(--text); border-bottom-color: var(--accent); }
+.live-tab-close { margin-left: auto; font-size: 16px; padding: 0 12px; }
+
+.live-panel-body {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.live-empty { margin: auto 0; font-size: 14px; color: var(--text-dim); text-align: center; }
+
+/* Chat rows. Bodies are user text — rendered as text, never trusted. */
+.chat-msg { display: flex; gap: 10px; align-items: flex-start; }
+.chat-msg .chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 85%;
+  padding: 7px 11px;
+  border-radius: 10px 10px 10px 3px;
+  background: var(--surface-2);
+}
+.chat-mine { justify-content: flex-end; }
+.chat-mine .chat-body {
+  border-radius: 10px 10px 3px 10px;
+  background: var(--accent-soft);
+}
+.chat-sender { font-size: 12px; font-weight: 700; color: var(--text-dim); }
+.chat-text { margin: 0; font-size: 15px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-time {
+  align-self: flex-end;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--rule-soft);
+  flex-shrink: 0;
+}
+.chat-composer .note-input { flex: 1; min-width: 0; }
+.chat-count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.chat-watch-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* The chat button in the live bar, with its unread count. */
+.live-chat-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  padding: 0 10px;
+  color: var(--accent);
+}
+.live-chat-button svg { width: 22px; height: 22px; }
+.chat-unread {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Activity feed rows. The kind square is shape+position coded, and every
+   row carries the words — never colour alone. */
+.feed-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+}
+.feed-kind {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  align-self: center;
+  background: var(--text-dim);
+}
+.feed-entered { background: var(--live); }
+.feed-left { background: var(--text-dim); }
+.feed-reached { background: var(--accent); }
+.feed-text { min-width: 0; overflow-wrap: anywhere; }
+.feed-time {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* People rows. */
+.person-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.person-row:hover { background: var(--surface-2); }
+.person-name { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
+.person-tag {
+  padding: 1px 7px;
+  border-radius: 2px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.person-tag-quiet { background: var(--surface-2); color: var(--text-dim); }
+.person-meta {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Small round face for chat, people and cards. */
+.face-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #475569;
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+.face-img { object-fit: cover; }
+
+/* The participant card — over the map, above the panel. */
+.live-card {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 1160;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 14px;
+  border: 1px solid var(--rule-soft);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 4px 18px #0006;
+}
+@media (min-width: 900px) {
+  .live-card { left: 10px; right: auto; width: 340px; margin: 0; }
+}
+.live-card-head { display: flex; align-items: center; gap: 10px; }
+.live-card-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.live-card-head .live-tab-close { margin-left: auto; }
+.live-card-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.live-card-trail { margin: 0; font-size: 12px; color: var(--text-dim); }
+.live-card-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--rule-soft);
+  padding-top: 8px;
+}
+
+/* The marker edit sheet's action row. */
+.marker-edit-row { align-items: center; }
+.marker-edit-row .open-in-maps { align-self: center; }
