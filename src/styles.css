@@ -1127,3 +1127,187 @@ body.map-first .header { display: none; }
 .placed-marker-glyph svg { width: 12px; height: 12px; }
 .icon-pick { display: flex; gap: 6px; flex-wrap: wrap; }
 .icon-pick .sheet-icon svg { width: 20px; height: 20px; }
+
+/* ---- Account: profile button, drawer, saved maps ----------------------
+   The account is a convenience beside the share button, never in front of
+   it: one small round control in the header, and a flat, ruled drawer.
+   Same register as everything else — solid surfaces, rules not shadows,
+   sentence case, 4px corners. */
+
+.nav { align-items: center; }
+
+.profile-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--rule-soft);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.profile-button:hover { border-color: var(--accent); color: var(--accent); }
+.profile-button[aria-expanded='true'] { border-color: var(--accent); }
+
+.profile-face { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-initial {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+.profile-glyph { display: flex; }
+.profile-glyph svg { width: 20px; height: 20px; }
+
+/* Click-away target only — the system uses no scrims, so it is invisible. */
+.drawer-cover { position: fixed; inset: 0; z-index: 1200; }
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1201;
+  width: min(340px, 88vw);
+  background: var(--bg);
+  border-left: 2px solid var(--rule);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.drawer-inner { display: flex; flex-direction: column; padding: 18px 20px 28px; }
+
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+}
+
+.drawer-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.drawer-face {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--rule-soft);
+  flex-shrink: 0;
+}
+.drawer-name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: var(--weight-semibold, 600);
+  overflow-wrap: anywhere;
+}
+.drawer-kind { margin: 0; font-size: 12px; color: var(--text-dim); }
+
+.drawer-section {
+  border-top: 1px solid var(--rule-soft);
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.drawer-section .panel-title { margin-bottom: 0; }
+.drawer-section .panel-hint { margin-bottom: 0; }
+
+.drawer-fold summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--accent);
+  padding: 6px 0;
+}
+.drawer-fold[open] summary { color: var(--text); font-weight: var(--weight-semibold, 600); }
+
+.stacked-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+
+.saved-list { list-style: none; margin: 0; padding: 0; }
+.saved-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--rule-soft);
+  padding: 4px 0;
+}
+.saved-row:first-child { border-top: 0; }
+.saved-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  background: none;
+  border: 0;
+  padding: 8px 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+}
+.saved-open:hover .saved-name { color: var(--accent); }
+.saved-name { font-size: 15px; font-weight: var(--weight-medium, 500); overflow-wrap: anywhere; }
+.saved-meta { font-size: 12px; color: var(--text-dim); }
+.saved-delete { flex-shrink: 0; font-size: 13px; }
+
+.drawer-signout { align-self: flex-start; }
+
+.file-hidden { display: none; }
+
+/* ---- Saving a map ------------------------------------------------------ */
+
+.save-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--rule-soft);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius, 4px);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+.save-hint { margin: 0; }
+.save-confirm { margin: 0; font-size: 14px; color: var(--live); font-weight: var(--weight-medium, 500); }
+
+/* In the live bar the save control gets the full width when it expands. */
+.live-bar { flex-wrap: wrap; }
+.live-bar .save-prompt { flex-basis: 100%; }
+.live-bar .save-confirm { flex-basis: 100%; }
+
+/* ---- Avatars on the map ------------------------------------------------
+   A face never replaces a meaning: the ring keeps its colour (blue = the
+   caller, slate = a peer or the viewer) and the photo sits inside it. */
+
+.marker-avatar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.pin-has-avatar { overflow: hidden; }
+.pin-has-avatar,
+.viewer-has-avatar { padding: 0; }
+.peer-dot .marker-avatar { border-radius: 50%; }
+.viewer-has-avatar { overflow: hidden; }
+
+/* The floating account control on the map-first start/located screens, where
+   there is no header. Sits above the map's own top-right stack, which shifts
+   down one slot to make room. */
+.profile-float { position: absolute; top: 10px; right: 10px; z-index: 1100; }
+.profile-float .profile-button {
+  width: 40px;
+  height: 40px;
+  background: var(--surface);
+  box-shadow: 0 1px 6px #0003;
+}
+.share-stage-account .map-locate { top: 62px; }
+.share-stage-account .map-stack-2 { top: 110px; }
+.share-stage-account .map-stack-3 { top: 158px; }

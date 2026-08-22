@@ -7,6 +7,8 @@ import {
   type OfflinePosition,
 } from '@whereareyou/protocol';
 import { resolveSession, type ResolvedWithWarning } from './api.js';
+import { useAccount } from './AccountContext.jsx';
+import { SaveMapButton } from './SaveMap.jsx';
 import { SessionMap } from './SessionMap.jsx';
 import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
@@ -53,7 +55,9 @@ export function Resolve() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   /** Set when this device has joined the resolved session's live room. */
   const [live, setLive] = useState<{ share: boolean; name: string } | null>(null);
-  const [joinName, setJoinName] = useState('');
+  const { account } = useAccount();
+  // The account name is the natural default for who you are in a room.
+  const [joinName, setJoinName] = useState(account.name);
   const [, forceTick] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   // Tiles are the only thing on this screen that needs the network. Without
@@ -162,6 +166,7 @@ export function Resolve() {
         role="joiner"
         share={live.share}
         {...(live.name !== '' ? { name: live.name } : {})}
+        {...(account.avatar !== null ? { avatar: account.avatar } : {})}
         initialPosition={session.position}
         onLeave={() => setLive(null)}
       />
@@ -307,6 +312,7 @@ export function Resolve() {
  */
 function OfflineView({ result, offline }: { result: OfflineResult; offline: boolean }) {
   const { position } = result;
+  const { account } = useAccount();
   const formats = allFormats(position.lat, position.lon);
   const cellSize = Math.max(1, Math.round(position.cellSizeM));
 
@@ -327,6 +333,21 @@ function OfflineView({ result, offline }: { result: OfflineResult; offline: bool
         offline={offline}
         allowFullscreen
         showViewerLocation
+        viewerAvatar={account.avatar}
+      />
+
+      <SaveMapButton
+        data={() => ({
+          lat: position.lat,
+          lon: position.lon,
+          accuracyM: position.cellSizeM,
+          note: '',
+          sketch: null,
+          marker: null,
+          thirdParty: false,
+          source: 'lookup',
+          code: result.code,
+        })}
       />
 
       <section className="panel">
@@ -348,6 +369,7 @@ function OfflineView({ result, offline }: { result: OfflineResult; offline: bool
 
 function SessionView({ session, offline }: { session: ResolvedWithWarning; offline: boolean }) {
   const { position } = session;
+  const { account } = useAccount();
   const formats = allFormats(position.lat, position.lon);
   const thirdParty = session.subject === 'third-party';
   const remaining = timeRemaining(session.expiresAt);
@@ -388,6 +410,7 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         fitSketch
         allowFullscreen
         showViewerLocation
+        viewerAvatar={account.avatar}
         {...(session.marker !== undefined
           ? {
               placedMarkers: [
@@ -395,6 +418,22 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
               ],
             }
           : {})}
+      />
+
+      <SaveMapButton
+        suggestedName={session.note?.trim() ?? ''}
+        data={() => ({
+          lat: position.lat,
+          lon: position.lon,
+          accuracyM: position.accuracyM,
+          note: session.note?.trim() ?? '',
+          sketch: session.sketch ?? null,
+          marker: session.marker ?? null,
+          ...(session.markerIcon !== undefined ? { markerIcon: session.markerIcon } : {}),
+          thirdParty,
+          source: 'lookup',
+          code: session.code,
+        })}
       />
 
       {session.marker !== undefined && (

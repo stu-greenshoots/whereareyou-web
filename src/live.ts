@@ -39,11 +39,15 @@ function liveUrl(code: string): string {
 export function connectLive(options: {
   code: string;
   name?: string;
+  /** Small data-URL photo, shown on everyone's map. Rides in the hello frame
+      as a server-side extension — see the api's live-route; not (yet) part of
+      the protocol's message types. */
+  avatar?: string;
   updateToken?: string;
   share: boolean;
   handlers: LiveHandlers;
 }): LiveHandle {
-  const { code, name, updateToken, share, handlers } = options;
+  const { code, name, avatar, updateToken, share, handlers } = options;
 
   let socket: WebSocket | null = null;
   let closedByUs = false;
@@ -76,6 +80,7 @@ export function connectLive(options: {
           code,
           share,
           ...(name !== undefined && name !== '' ? { name } : {}),
+          ...(avatar !== undefined && avatar !== '' ? { avatar } : {}),
           ...(updateToken !== undefined ? { updateToken } : {}),
         }),
       );

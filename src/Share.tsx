@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
 import type { CreateSessionResponse, MarkerIcon, Position, SessionMode, Sketch } from '@whereareyou/protocol';
 import { mintSession, revokeSession, upgradeToLive } from './api.js';
+import { useAccount } from './AccountContext.jsx';
+import { ProfileMenu } from './ProfileMenu.jsx';
+import { SaveMapButton } from './SaveMap.jsx';
 import { useConnectivity } from './connectivity.js';
 import { Map, MarkerIconPicker } from './Map.jsx';
 import { Brand } from './Brand.jsx';
@@ -250,6 +253,7 @@ export function Share() {
   const phaseGroupRef = useRef<'start' | 'placed' | 'done'>('start');
   const [history, setHistory] = useState<PastShare[]>(loadHistory);
   const [resumable, setResumable] = useState<ActiveShare | null>(loadActiveShare);
+  const { account, openMapRequest, consumeOpenMapRequest, requestOpenMap } = useAccount();
   const [, forceTick] = useState(0);
   const watchRef = useRef<number | null>(null);
   const { online, linkUp, reportReachable, reportUnreachable } = useConnectivity();
@@ -489,6 +493,32 @@ export function Share() {
     [stopAcquire],
   );
 
+  // A saved map opened from the profile drawer: same move as reusing a past
+  // share — back onto the located screen with everything restored, and the
+  // caller presses the button themselves. Nothing is ever re-shared silently.
+  useEffect(() => {
+    if (openMapRequest === null) return;
+    const saved = openMapRequest;
+    consumeOpenMapRequest();
+    stopAcquire();
+    setThirdParty(saved.thirdParty);
+    setShareName(saved.name);
+    setNote(saved.note);
+    setSketch(saved.sketch !== null ? decodeSketch(saved.sketch) : null);
+    setMarker(saved.marker ?? null);
+    setMarkerIcon(saved.markerIcon ?? 'spot');
+    setPhase({
+      name: 'located',
+      position: {
+        lat: saved.lat,
+        lon: saved.lon,
+        accuracyM: saved.accuracyM,
+        source: 'manual',
+        takenAt: new Date().toISOString(),
+      },
+    });
+  }, [openMapRequest, consumeOpenMapRequest, stopAcquire]);
+
   /**
    * Hand the caller a permanent, self-contained code.
    *
@@ -718,7 +748,12 @@ export function Share() {
         role="owner"
         updateToken={session.updateToken}
         share
-        {...(shareName.trim() !== '' ? { name: shareName.trim() } : {})}
+        {...(account.name !== ''
+          ? { name: account.name }
+          : shareName.trim() !== ''
+            ? { name: shareName.trim() }
+            : {})}
+        {...(account.avatar !== null ? { avatar: account.avatar } : {})}
         initialPosition={phase.position}
         initialSketch={sketch}
         initialMarker={marker}
@@ -739,9 +774,14 @@ export function Share() {
         : UK_CENTRE;
 
     return (
-      <div className="share-stage">
+      <div className="share-stage share-stage-account">
         <div className="map-brand" aria-hidden="true">
           <Brand />
+        </div>
+        {/* The header is gone in map-first mode, so the account gets its own
+            floating control — top-right, above the map's stacked controls. */}
+        <div className="profile-float">
+          <ProfileMenu onOpenSavedMap={requestOpenMap} />
         </div>
         <Map
           lat={centre.lat}
@@ -750,6 +790,7 @@ export function Share() {
           hidePin={!located}
           initialZoom={located ? 17 : history.length > 0 ? 13 : 5}
           thirdParty={thirdParty}
+          pinAvatar={thirdParty ? null : account.avatar}
           offline={!online}
           locating={acquiring}
           sketch={located ? sketch : null}
@@ -959,6 +1000,7 @@ export function Share() {
         formats={formats}
         sketch={sketch}
         thirdParty={thirdParty}
+        pinAvatar={thirdParty ? null : account.avatar}
         liveWanted={mode === 'live'}
         online={online}
         keeping={keepingOfflineCode}
@@ -966,6 +1008,23 @@ export function Share() {
         onUpgrade={() => void mint(phase.position, phase.code)}
         onShare={() => void nativeShare()}
         onStartAgain={startAgain}
+        saveSlot={
+          <SaveMapButton
+            suggestedName={shareName.trim() !== '' ? shareName.trim() : note.trim()}
+            data={() => ({
+              lat: phase.position.lat,
+              lon: phase.position.lon,
+              accuracyM: phase.position.accuracyM,
+              note: note.trim(),
+              sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
+              marker,
+              markerIcon,
+              thirdParty,
+              source: 'share',
+              code: phase.code,
+            })}
+          />
+        }
       />
     );
   }
@@ -1046,6 +1105,22 @@ export function Share() {
         </button>
       )}
 
+      <SaveMapButton
+        suggestedName={shareName.trim() !== '' ? shareName.trim() : note.trim()}
+        data={() => ({
+          lat: position.lat,
+          lon: position.lon,
+          accuracyM: position.accuracyM,
+          note: note.trim(),
+          sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
+          marker,
+          markerIcon,
+          thirdParty,
+          source: 'share',
+          code: session.code,
+        })}
+      />
+
       {liveError !== null && (
         <div className="notice notice-warn">
           <p>Could not make this live: {liveError}</p>
@@ -1095,6 +1170,7 @@ export function Share() {
         lon={position.lon}
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
+        pinAvatar={thirdParty ? null : account.avatar}
         offline={!online}
         sketch={sketch}
         fitSketch
@@ -1485,6 +1561,8 @@ function OfflineShared({
   onUpgrade,
   onShare,
   onStartAgain,
+  saveSlot,
+  pinAvatar,
 }: {
   phase: Extract<Phase, { name: 'offline-shared' }>;
   formats: ReturnType<typeof allFormats>;
@@ -1497,6 +1575,8 @@ function OfflineShared({
   onUpgrade: () => void;
   onShare: () => void;
   onStartAgain: () => void;
+  saveSlot?: React.ReactNode;
+  pinAvatar?: string | null;
 }) {
   const { position, code, cause, detail } = phase;
 
@@ -1545,6 +1625,8 @@ function OfflineShared({
           Start again
         </button>
       </div>
+
+      {saveSlot}
 
       <p className="offline-reason">
         {cause === 'no-link' && 'Your phone has no connection, so there was no way to create a code that expires.'}
@@ -1598,6 +1680,7 @@ function OfflineShared({
         lon={position.lon}
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
+        pinAvatar={pinAvatar ?? null}
         offline={!online}
         sketch={sketch}
         fitSketch

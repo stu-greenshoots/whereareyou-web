@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Share } from './Share.jsx';
 import { Resolve } from './Resolve.jsx';
 import { Brand } from './Brand.jsx';
+import { AccountProvider, useAccount } from './AccountContext.jsx';
+import { ProfileMenu } from './ProfileMenu.jsx';
 
 type Route = 'share' | 'lookup';
 
@@ -24,7 +26,16 @@ function currentRoute(): Route {
 }
 
 export function App() {
+  return (
+    <AccountProvider>
+      <AppShell />
+    </AccountProvider>
+  );
+}
+
+function AppShell() {
   const [route, setRoute] = useState<Route>(currentRoute);
+  const { requestOpenMap } = useAccount();
 
   useEffect(() => {
     const onPop = () => setRoute(currentRoute());
@@ -72,6 +83,14 @@ export function App() {
           >
             Look up
           </button>
+          <ProfileMenu
+            onOpenSavedMap={(map) => {
+              // The share screen is where a map is material — it consumes the
+              // request from context once it is mounted.
+              requestOpenMap(map);
+              navigate('share');
+            }}
+          />
         </nav>
       </header>
 

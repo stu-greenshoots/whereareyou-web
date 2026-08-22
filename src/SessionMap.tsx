@@ -3,7 +3,12 @@ import { decodeSketch, encodeSketch } from '@whereareyou/protocol';
 import type { LiveParticipant, MarkerIcon, Position, Sketch } from '@whereareyou/protocol';
 import { connectLive, type LiveHandle } from './live.js';
 import { Map, MarkerIconPicker, type MapPeer, type PlacedMarker } from './Map.jsx';
+import { SaveMapButton } from './SaveMap.jsx';
 import { inferSource, timeRemaining } from './formats.js';
+
+/** Participants as the reference server sends them: protocol shape plus the
+    avatar extension it relays from each hello (see api's live-route). */
+type ParticipantWithAvatar = LiveParticipant & { avatar?: string };
 
 /**
  * The live room, as a screen. One component for both roles: the OWNER's map
@@ -22,6 +27,8 @@ export interface SessionMapProps {
   /** Whether THIS device streams its position (owners always do). */
   share: boolean;
   name?: string;
+  /** This device's account photo, shown on everyone's map. */
+  avatar?: string;
   initialPosition: { lat: number; lon: number; accuracyM: number };
   initialSketch?: Sketch | null;
   initialMarker?: Position | null;
@@ -41,6 +48,7 @@ export function SessionMap({
   updateToken,
   share,
   name,
+  avatar,
   initialPosition,
   initialSketch = null,
   initialMarker = null,
@@ -82,6 +90,7 @@ export function SessionMap({
       code,
       share,
       ...(name !== undefined && name !== '' ? { name } : {}),
+      ...(avatar !== undefined && avatar !== '' ? { avatar } : {}),
       ...(updateToken !== undefined ? { updateToken } : {}),
       handlers: {
         onWelcome: (participantId, expires, roster) => {
@@ -208,19 +217,26 @@ export function SessionMap({
       ? (myPosition ?? initialPosition)
       : (owner?.position ?? initialPosition);
 
+  // The blue pin's face follows the same rule as the pin itself: me when I
+  // own the session, the owner's account photo (if they sent one) when not.
+  const pinFace =
+    role === 'owner'
+      ? (avatar ?? null)
+      : ((owner as ParticipantWithAvatar | undefined)?.avatar ?? null);
+
   const peers = useMemo(() => {
     const dots: MapPeer[] = [];
-    for (const entry of roster) {
+    for (const entry of roster as ParticipantWithAvatar[]) {
       if (entry.owner || entry.id === selfId || entry.position === undefined) continue;
-      dots.push({ id: entry.id, label: entry.name, position: entry.position });
+      dots.push({ id: entry.id, label: entry.name, avatar: entry.avatar, position: entry.position });
     }
     // A sharing joiner appears to themselves too — seeing your own dot is
     // how you know the room can see you.
     if (role === 'joiner' && share && myPosition !== null) {
-      dots.push({ id: 'self', label: name ?? 'Me', position: myPosition });
+      dots.push({ id: 'self', label: name ?? 'Me', avatar, position: myPosition });
     }
     return dots;
-  }, [roster, selfId, role, share, myPosition, name]);
+  }, [roster, selfId, role, share, myPosition, name, avatar]);
 
   const placedMarkers = useMemo(() => {
     const points: PlacedMarker[] = [];
@@ -266,6 +282,7 @@ export function SessionMap({
         remoteSketches={remoteSketches}
         placedMarkers={placedMarkers}
         onPlaceMarker={placeMarker}
+        pinAvatar={pinFace}
         fullscreenLocked
         className="map map-fill"
         fullscreenOverlay={
@@ -299,6 +316,24 @@ export function SessionMap({
                 {role === 'owner' ? 'Back to code' : 'Leave'}
               </button>
             </div>
+            {/* A live map is savable by anyone in it — the snapshot is taken
+                at save time: the pin as it stands, my drawing, my spot. */}
+            <SaveMapButton
+              className="button live-bar-save"
+              data={() => ({
+                lat: pin.lat,
+                lon: pin.lon,
+                accuracyM: pin.accuracyM,
+                note: '',
+                sketch:
+                  mySketch !== null && mySketch.shapes.length > 0 ? encodeSketch(mySketch) : null,
+                marker: myMarker,
+                markerIcon: myMarkerIcon,
+                thirdParty: false,
+                source: 'live',
+                code,
+              })}
+            />
           </div>
           </>
         }

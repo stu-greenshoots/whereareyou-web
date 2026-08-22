@@ -28,13 +28,29 @@ function placementAccuracy(lat: number, zoom: number): number {
   return Math.round(Math.min(300, Math.max(3, metresPerPixel * TOLERANCE_PX)));
 }
 
+/**
+ * Only a small same-shape data URL may become an <img> in marker HTML.
+ * Peer avatars arrive over the wire from OTHER people, and these strings are
+ * interpolated into innerHTML — the base64 charset contains no quote or
+ * bracket, so a string this regex passes cannot break out of the attribute.
+ */
+const SAFE_AVATAR = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+
+function avatarImg(avatar: string | undefined): string | null {
+  if (avatar === undefined || avatar.length > 20_000 || !SAFE_AVATAR.test(avatar)) return null;
+  return `<img class="marker-avatar" src="${avatar}" alt="" />`;
+}
+
 // Leaflet's default marker icons are resolved relative to the CSS, which breaks
 // under a bundler. Draw our own instead — also lets a third-party report look
 // visually different from a self-report, which matters (see below).
-function pinIcon(colour: string): L.DivIcon {
+// An avatar sits INSIDE the ring; the ring keeps its colour, because the
+// colour is the information (blue = the caller) and the photo is only a face.
+function pinIcon(colour: string, avatar?: string): L.DivIcon {
+  const img = avatarImg(avatar);
   return L.divIcon({
     className: 'pin-icon',
-    html: `<span class="pin" style="--pin-colour:${colour}"></span>`,
+    html: `<span class="pin ${img !== null ? 'pin-has-avatar' : ''}" style="--pin-colour:${colour}">${img ?? ''}</span>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
   });
@@ -67,6 +83,8 @@ const VIEWER_COLOUR = '#475569';
 export interface MapPeer {
   id: string;
   label?: string | undefined;
+  /** Small data-URL photo shown inside the dot, when they have one. */
+  avatar?: string | undefined;
   position: { lat: number; lon: number; accuracyM: number };
 }
 
@@ -144,22 +162,24 @@ function placedIcon(label: string | undefined, icon: MarkerIcon | undefined): L.
   });
 }
 
-function peerIcon(label: string | undefined): L.DivIcon {
+function peerIcon(label: string | undefined, avatar?: string): L.DivIcon {
+  const img = avatarImg(avatar);
   const first = (label ?? '').trim().charAt(0).toUpperCase();
   // One character, strictly alphanumeric — this goes into innerHTML.
   const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
   return L.divIcon({
     className: 'peer-dot-icon',
-    html: `<span class="peer-dot">${initial}</span>`,
+    html: `<span class="peer-dot">${img ?? initial}</span>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
   });
 }
 
-function viewerIcon(): L.DivIcon {
+function viewerIcon(avatar?: string): L.DivIcon {
+  const img = avatarImg(avatar);
   return L.divIcon({
     className: 'viewer-dot-icon',
-    html: '<span class="viewer-dot"></span>',
+    html: `<span class="viewer-dot ${img !== null ? 'viewer-has-avatar' : ''}">${img ?? ''}</span>`,
     iconSize: [16, 16],
     iconAnchor: [8, 8],
   });
@@ -254,6 +274,14 @@ export interface MapProps {
    * the caller, and this button must not be able to lie about that.
    */
   showViewerLocation?: boolean;
+  /**
+   * The account photo of whoever this map's PIN is — shown inside the pin
+   * ring. The ring keeps its meaning-colour; the photo only adds a face.
+   * Never set for third-party reports: the pin is not the sharer there.
+   */
+  pinAvatar?: string | null;
+  /** Same, for the viewer-location dot. */
+  viewerAvatar?: string | null;
   className?: string;
 }
 
@@ -283,6 +311,8 @@ export function Map({
   moveOnClick = true,
   allowFullscreen = false,
   showViewerLocation = false,
+  pinAvatar = null,
+  viewerAvatar = null,
   className,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -331,7 +361,7 @@ export function Map({
   const viewerMarkerRef = useRef<L.Marker | null>(null);
   const viewerCircleRef = useRef<L.Circle | null>(null);
   // Records, not Maps — the global Map is shadowed by this component's name.
-  const peerLayersRef = useRef<Record<string, { marker: L.Marker; circle: L.Circle }>>({});
+  const peerLayersRef = useRef<Record<string, { marker: L.Marker; circle: L.Circle; face: string }>>({});
   const remoteSketchesRef = useRef<Record<string, SketchHandle>>({});
   const placedLayersRef = useRef<Record<string, L.Marker>>({});
   const placedTapsRef = useRef<Record<string, (() => void) | undefined>>({});
@@ -390,10 +420,12 @@ export function Map({
     // incident is" is the worst failure this UI can produce, so the two never
     // look alike.
     const colour = thirdParty ? '#d97706' : '#2563eb';
+    // A third-party pin is not the sharer, so it never wears their face.
+    const face = thirdParty ? undefined : (pinAvatar ?? undefined);
 
     if (markerRef.current === null) {
       const marker = L.marker([lat, lon], {
-        icon: pinIcon(colour),
+        icon: pinIcon(colour, face),
         draggable: onMoveRef.current !== undefined,
       }).addTo(map);
 
@@ -405,7 +437,7 @@ export function Map({
       markerRef.current = marker;
     } else {
       markerRef.current.setLatLng([lat, lon]);
-      markerRef.current.setIcon(pinIcon(colour));
+      markerRef.current.setIcon(pinIcon(colour, face));
     }
 
     if (circleRef.current === null) {
@@ -433,7 +465,7 @@ export function Map({
         trailRef.current.setLatLngs(trail);
       }
     }
-  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin]);
+  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin, pinAvatar]);
 
   // Sync the committed sketch. Same shape as the marker effect above, and its
   // handle is nulled in the same teardown, for the same StrictMode reason.
@@ -468,9 +500,13 @@ export function Map({
       seen.add(peer.id);
       const at: [number, number] = [peer.position.lat, peer.position.lon];
       const existing = layers[peer.id];
+      // Icons carry the label and avatar, so a change to either re-renders
+      // the dot rather than leaving a stale face on a renamed peer.
+      const face = `${peer.label ?? ''}|${peer.avatar ?? ''}`;
       if (existing === undefined) {
         layers[peer.id] = {
-          marker: L.marker(at, { icon: peerIcon(peer.label), interactive: false, keyboard: false }).addTo(map),
+          face,
+          marker: L.marker(at, { icon: peerIcon(peer.label, peer.avatar), interactive: false, keyboard: false }).addTo(map),
           circle: L.circle(at, {
             radius: peer.position.accuracyM,
             color: PEER_COLOUR,
@@ -481,6 +517,10 @@ export function Map({
         };
       } else {
         existing.marker.setLatLng(at);
+        if (existing.face !== face) {
+          existing.marker.setIcon(peerIcon(peer.label, peer.avatar));
+          existing.face = face;
+        }
         existing.circle.setLatLng(at);
         existing.circle.setRadius(peer.position.accuracyM);
       }
@@ -756,7 +796,7 @@ export function Map({
         const at: [number, number] = [fix.coords.latitude, fix.coords.longitude];
         if (viewerMarkerRef.current === null) {
           viewerMarkerRef.current = L.marker(at, {
-            icon: viewerIcon(),
+            icon: viewerIcon(viewerAvatar ?? undefined),
             interactive: false,
             keyboard: false,
           }).addTo(map);

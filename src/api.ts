@@ -19,7 +19,7 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; message: string; status: number };
 
-async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
+export async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
