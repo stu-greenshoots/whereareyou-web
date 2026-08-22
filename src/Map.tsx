@@ -59,6 +59,31 @@ function withShapeIfItFits(base: Sketch, shape: Sketch['shapes'][number]): Sketc
  */
 const VIEWER_COLOUR = '#475569';
 
+/**
+ * Other people in a live room. Neutral slate DOTS with an initial — never a
+ * pin. Blue means THE caller and amber means a third-party report; someone
+ * who merely joined the room must not be mistakable for either.
+ */
+export interface MapPeer {
+  id: string;
+  label?: string | undefined;
+  position: { lat: number; lon: number; accuracyM: number };
+}
+
+const PEER_COLOUR = '#475569';
+
+function peerIcon(label: string | undefined): L.DivIcon {
+  const first = (label ?? '').trim().charAt(0).toUpperCase();
+  // One character, strictly alphanumeric — this goes into innerHTML.
+  const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
+  return L.divIcon({
+    className: 'peer-dot-icon',
+    html: `<span class="peer-dot">${initial}</span>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
 function viewerIcon(): L.DivIcon {
   return L.divIcon({
     className: 'viewer-dot-icon',
@@ -121,6 +146,10 @@ export interface MapProps {
    * in the same bottom stack.
    */
   fullscreenOverlay?: ReactNode;
+  /** Other live-room participants, drawn as initial-dots. */
+  peers?: MapPeer[];
+  /** Other participants' drawings, one handle per participant. */
+  remoteSketches?: Array<{ id: string; sketch: Sketch }>;
   /**
    * Adds an expand control that takes the map full screen — for the look-up
    * side, whose map is small, and for drawing, where a 280px strip is a
@@ -156,6 +185,8 @@ export function Map({
   initialZoom = 17,
   fullscreenLocked = false,
   fullscreenOverlay,
+  peers,
+  remoteSketches,
   allowFullscreen = false,
   showViewerLocation = false,
   className,
@@ -205,6 +236,9 @@ export function Map({
   const [viewerNote, setViewerNote] = useState<string | null>(null);
   const viewerMarkerRef = useRef<L.Marker | null>(null);
   const viewerCircleRef = useRef<L.Circle | null>(null);
+  // Records, not Maps — the global Map is shadowed by this component's name.
+  const peerLayersRef = useRef<Record<string, { marker: L.Marker; circle: L.Circle }>>({});
+  const remoteSketchesRef = useRef<Record<string, SketchHandle>>({});
 
   useEffect(() => {
     if (containerRef.current === null) return;
@@ -238,6 +272,8 @@ export function Map({
       sketchHandleRef.current = null;
       viewerMarkerRef.current = null;
       viewerCircleRef.current = null;
+      peerLayersRef.current = {};
+      remoteSketchesRef.current = {};
       fittedSketchRef.current = false;
     };
     // Created once per mount; position changes are handled by the effect below.
@@ -323,6 +359,60 @@ export function Map({
     if (bounds === null) return;
     map.fitBounds(L.latLngBounds(bounds).extend([lat, lon]), { padding: [32, 32], maxZoom: 18 });
   }, [map, fitSketch, sketch, lat, lon]);
+
+  // Sync the peer dots — add, move, and remove to match the roster.
+  useEffect(() => {
+    if (map === null) return;
+    const layers = peerLayersRef.current;
+    const seen = new Set<string>();
+    for (const peer of peers ?? []) {
+      seen.add(peer.id);
+      const at: [number, number] = [peer.position.lat, peer.position.lon];
+      const existing = layers[peer.id];
+      if (existing === undefined) {
+        layers[peer.id] = {
+          marker: L.marker(at, { icon: peerIcon(peer.label), interactive: false, keyboard: false }).addTo(map),
+          circle: L.circle(at, {
+            radius: peer.position.accuracyM,
+            color: PEER_COLOUR,
+            fillColor: PEER_COLOUR,
+            fillOpacity: 0.08,
+            weight: 1,
+          }).addTo(map),
+        };
+      } else {
+        existing.marker.setLatLng(at);
+        existing.circle.setLatLng(at);
+        existing.circle.setRadius(peer.position.accuracyM);
+      }
+    }
+    for (const id of Object.keys(layers)) {
+      if (!seen.has(id)) {
+        layers[id]!.marker.remove();
+        layers[id]!.circle.remove();
+        delete layers[id];
+      }
+    }
+  }, [map, peers]);
+
+  // Sync other participants' drawings — one renderer handle each.
+  useEffect(() => {
+    if (map === null) return;
+    const handles = remoteSketchesRef.current;
+    const seen = new Set<string>();
+    for (const remote of remoteSketches ?? []) {
+      seen.add(remote.id);
+      const existing = handles[remote.id];
+      if (existing === undefined) handles[remote.id] = attachSketch(map, remote.sketch);
+      else existing.update(remote.sketch);
+    }
+    for (const id of Object.keys(handles)) {
+      if (!seen.has(id)) {
+        handles[id]!.remove();
+        delete handles[id];
+      }
+    }
+  }, [map, remoteSketches]);
 
   // Entering or leaving full screen resizes the container out from under
   // Leaflet, which measures once. Re-measure after the new layout applies.

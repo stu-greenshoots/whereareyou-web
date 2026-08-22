@@ -78,6 +78,8 @@ export default defineConfig({
       '/v1': {
         target: 'http://localhost:8787',
         changeOrigin: true,
+        // Live rooms ride a WebSocket on the same path prefix.
+        ws: true,
       },
       '/health': {
         target: 'http://localhost:8787',

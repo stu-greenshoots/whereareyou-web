@@ -7,6 +7,7 @@ import {
   type OfflinePosition,
 } from '@whereareyou/protocol';
 import { resolveSession, type ResolvedWithWarning } from './api.js';
+import { SessionMap } from './SessionMap.jsx';
 import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
 import { CopyRow } from './CopyRow.jsx';
@@ -50,6 +51,9 @@ export function Resolve() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  /** Set when this device has joined the resolved session's live room. */
+  const [live, setLive] = useState<{ share: boolean; name: string } | null>(null);
+  const [joinName, setJoinName] = useState('');
   const [, forceTick] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   // Tiles are the only thing on this screen that needs the network. Without
@@ -94,6 +98,7 @@ export function Resolve() {
       // code. This path works with the API stopped and the network unplugged.
       if (candidate.kind === 'offline') {
         setSession(null);
+        setLive(null);
         setError(null);
         setOffline({ code: candidate.code, position: candidate.position });
         setHistory((previous) =>
@@ -110,6 +115,7 @@ export function Resolve() {
       setBusy(true);
       setError(null);
       setOffline(null);
+      setLive(null);
       const result = await resolveSession(candidate.code, apiKey || undefined);
       setBusy(false);
 
@@ -146,6 +152,21 @@ export function Resolve() {
     setApiKey(value);
     sessionStorage.setItem('resolverKey', value);
   }, []);
+
+  // Joined: the room takes the whole screen until they leave.
+  if (session !== null && live !== null) {
+    return (
+      <SessionMap
+        code={session.code}
+        displayCode={formatCode(session.code)}
+        role="joiner"
+        share={live.share}
+        {...(live.name !== '' ? { name: live.name } : {})}
+        initialPosition={session.position}
+        onLeave={() => setLive(null)}
+      />
+    );
+  }
 
   return (
     <div className="stack">
@@ -187,6 +208,34 @@ export function Resolve() {
       </form>
 
       {error !== null && <div className="notice notice-warn">{error}</div>}
+
+      {session !== null && session.mode === 'live' && (
+        <div className="notice notice-live join-prompt">
+          <strong>This is a live session — you can join it.</strong>
+          <span>
+            Joining shares your position and your drawings with everyone in it, including the
+            caller, until you leave. Or just watch it move.
+          </span>
+          <input
+            className="note-input"
+            placeholder="Your name (optional)"
+            value={joinName}
+            maxLength={40}
+            onChange={(event) => setJoinName(event.target.value)}
+          />
+          <div className="notice-actions">
+            <button
+              className="button button-primary"
+              onClick={() => setLive({ share: true, name: joinName.trim() })}
+            >
+              Join and share my location
+            </button>
+            <button className="button" onClick={() => setLive({ share: false, name: joinName.trim() })}>
+              Just watch
+            </button>
+          </div>
+        </div>
+      )}
 
       {session !== null && <SessionView session={session} offline={!online} />}
 

@@ -1051,3 +1051,29 @@ body.map-first .header { display: none; }
 .place-search-row .note-input { flex: 1; min-width: 0; }
 .place-search-row .button { flex: 0 0 auto; }
 .place-results { max-height: 32dvh; overflow-y: auto; }
+
+/* ---- Live rooms -------------------------------------------------------- */
+/* Another participant: a slate dot with their initial — never a pin. */
+.peer-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #475569;
+  color: #fff;
+  border: 2px solid #fff;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 4px #0006;
+}
+
+.live-bar { align-items: center; }
+.live-bar-code { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.live-bar-status { margin: 0; font-size: 12px; color: var(--text-dim); }
+
+.join-prompt { display: flex; flex-direction: column; }
+.join-prompt .note-input { margin-top: 8px; }

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor } from '@whereareyou/protocol';
 import type { CreateSessionResponse, Position, SessionMode, Sketch } from '@whereareyou/protocol';
-import { mintSession, revokeSession, updatePosition } from './api.js';
+import { mintSession, revokeSession, updatePosition, upgradeToLive } from './api.js';
 import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
 import { Brand } from './Brand.jsx';
+import { SessionMap } from './SessionMap.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
 
@@ -155,6 +156,9 @@ export function Share() {
   const [ttl, setTtl] = useState(1800);
   /** Local-only label for the history list — see PastShare.name. */
   const [shareName, setShareName] = useState('');
+  /** The owner's live map is open over the code screen. */
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
   /** Which sheet panel is open. Hoisted here so browser Back can close it. */
   const [sheetPanel, setSheetPanel] = useState<'none' | 'options' | 'fallback'>('none');
   const sheetPanelRef = useRef(sheetPanel);
@@ -477,6 +481,9 @@ export function Share() {
   // Live mode: stream position updates until expiry or revocation.
   useEffect(() => {
     if (phase.name !== 'shared' || phase.session === undefined || mode !== 'live') return;
+    // The live map streams over its own socket (which also persists to the
+    // store) — two writers for one pin helps nobody.
+    if (liveOpen) return;
     if (!('geolocation' in navigator)) return;
 
     const { code, updateToken } = phase.session;
@@ -500,12 +507,14 @@ export function Share() {
       if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
       watchRef.current = null;
     };
-  }, [phase, mode]);
+  }, [phase, mode, liveOpen]);
 
   const startAgain = useCallback(() => {
     setStopFailure(null);
     setKeepingOfflineCode(false);
     setSketch(null);
+    setLiveOpen(false);
+    setLiveError(null);
     setPhase({ name: 'idle' });
   }, []);
 
@@ -625,6 +634,8 @@ export function Share() {
                 setNote={setNote}
                 name={shareName}
                 setName={setShareName}
+                mode={mode}
+                setMode={setMode}
                 ttl={ttl}
                 setTtl={setTtl}
                 panel={sheetPanel}
@@ -731,6 +742,22 @@ export function Share() {
   const remaining = timeRemaining(session.expiresAt);
   const expired = remaining === 'expired';
 
+  if (liveOpen) {
+    return (
+      <SessionMap
+        code={session.code}
+        displayCode={formatCode(session.code)}
+        role="owner"
+        updateToken={session.updateToken}
+        share
+        {...(shareName.trim() !== '' ? { name: shareName.trim() } : {})}
+        initialPosition={position}
+        initialSketch={sketch}
+        onLeave={() => setLiveOpen(false)}
+      />
+    );
+  }
+
   return (
     <div className="stack">
       <div className={`code-doc ${expired ? 'code-expired' : ''}`}>
@@ -773,6 +800,35 @@ export function Share() {
           {expired ? 'Start again' : 'Stop sharing'}
         </button>
       </div>
+
+      {!expired && (
+        <button
+          className="button button-primary"
+          onClick={() => {
+            void (async () => {
+              setLiveError(null);
+              if (mode !== 'live') {
+                // One-way upgrade — the room needs a live session behind it.
+                const result = await upgradeToLive(session.code, session.updateToken);
+                if (!result.ok) {
+                  setLiveError(result.message);
+                  return;
+                }
+                setMode('live');
+              }
+              setLiveOpen(true);
+            })();
+          }}
+        >
+          {mode === 'live' ? 'Open the live map' : 'Make this a live session'}
+        </button>
+      )}
+
+      {liveError !== null && (
+        <div className="notice notice-warn">
+          <p>Could not make this live: {liveError}</p>
+        </div>
+      )}
 
       {stopFailure !== null && (
         <div className="notice notice-warn">
@@ -852,6 +908,8 @@ function LocatedSheet({
   setNote,
   name,
   setName,
+  mode,
+  setMode,
   ttl,
   setTtl,
   panel,
@@ -870,6 +928,8 @@ function LocatedSheet({
   setNote: (value: string) => void;
   name: string;
   setName: (value: string) => void;
+  mode: SessionMode;
+  setMode: (value: SessionMode) => void;
   ttl: number;
   setTtl: (value: number) => void;
   panel: 'none' | 'options' | 'fallback';
@@ -930,10 +990,25 @@ function LocatedSheet({
             </div>
           </div>
 
-          {/* The third-party and live-update toggles are benched for now:
-              live mode has never been verified end to end, and the report-
-              somewhere-else flow already exists via the start screen's link.
-              The state machinery behind both is kept. */}
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={mode === 'live' && online}
+              disabled={!online}
+              onChange={(event) => setMode(event.target.checked ? 'live' : 'static')}
+            />
+            <span>
+              <strong>Live session</strong>
+              <small>
+                {online
+                  ? 'Others can join from your link, see you move, and draw with you.'
+                  : 'Needs a connection — a live session lives on the server.'}
+              </small>
+            </span>
+          </label>
+
+          {/* The third-party toggle stays benched: the report-somewhere-else
+              flow on the start screen covers it. */}
 
           <input
             className="note-input"

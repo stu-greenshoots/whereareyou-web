@@ -95,6 +95,14 @@ export function mintSession(options: MintOptions): Promise<ApiResult<CreateSessi
   });
 }
 
+/** One-way: a static session becomes joinable. Never the reverse. */
+export function upgradeToLive(code: string, updateToken: string): Promise<ApiResult<void>> {
+  return request<void>(`/v1/sessions/${code}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ updateToken, mode: 'live' }),
+  });
+}
+
 export interface ResolvedWithWarning extends ResolvedSession {
   warning?: string;
 }
