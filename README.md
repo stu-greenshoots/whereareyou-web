@@ -37,15 +37,22 @@ satellite fix at 5–15m.
 
 ## The two surfaces
 
-**Share screen** — one button. Gets a fix, mints a code, and presents it as an
-issued document with the phonetic rendering directly under each character.
-Supports third-party reports (a location you are *not* standing at), live
-sessions that keep updating, and always shows fallback coordinates: offline
-code, lat/lon, Plus Code, OS grid reference.
+**Share screen** — map-first. Opens straight onto a full-height map with one
+floating button; getting a fix, drawing on the map (arrows, pen, circles),
+naming the share, choosing how long the code lasts and minting all happen over
+the map, then the code is presented as an issued document with the phonetic
+rendering directly under each character. Supports reporting somewhere you are
+*not* standing (with place search), keeps a device-local history of past
+shares for one-tap reuse, and always offers the fallback formats: offline
+code, lat/lon, Plus Code, OS grid reference — folded away while online,
+forced open when the connection is gone. (A live keep-updating mode exists in
+the code but is benched: it has not been verified end to end.)
 
-**Dispatcher console** — one input accepting either code type, routed by length.
-Map with accuracy circle, all coordinate formats, copy-for-CAD, and a
-client-only shift history.
+**Dispatcher console** — one input accepting either code type, routed by
+length; a shared link carries its code and resolves on arrival. Map with
+accuracy circle and the caller's drawing, full-screen mode with a
+locate-yourself dot, all coordinate formats, copy-for-CAD, and a client-only
+shift history.
 
 ## Design decisions
 
