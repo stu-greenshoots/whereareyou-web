@@ -1104,3 +1104,26 @@ body.map-first .header { display: none; }
 
 .live-bar-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .resume-chip { box-shadow: 0 4px 14px #0005; }
+
+/* "A spot is marked" row in the located sheet. */
+.marker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* The glyph inside a placed diamond, and the icon chooser. */
+.placed-marker-glyph {
+  display: flex;
+  transform: rotate(-45deg);
+  width: 12px;
+  height: 12px;
+  color: #475569;
+}
+.placed-marker-glyph svg { width: 12px; height: 12px; }
+.icon-pick { display: flex; gap: 6px; flex-wrap: wrap; }
+.icon-pick .sheet-icon svg { width: 20px; height: 20px; }

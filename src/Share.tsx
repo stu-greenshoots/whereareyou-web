@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
-import type { CreateSessionResponse, Position, SessionMode, Sketch } from '@whereareyou/protocol';
+import type { CreateSessionResponse, MarkerIcon, Position, SessionMode, Sketch } from '@whereareyou/protocol';
 import { mintSession, revokeSession, upgradeToLive } from './api.js';
 import { useConnectivity } from './connectivity.js';
-import { Map } from './Map.jsx';
+import { Map, MarkerIconPicker } from './Map.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap } from './SessionMap.jsx';
 import { connectLive } from './live.js';
@@ -88,6 +88,8 @@ interface PastShare {
   note: string;
   /** Encoded sketch payload, restored onto the map when reused. */
   sketch: string | null;
+  marker: Position | null;
+  markerIcon?: MarkerIcon;
   thirdParty: boolean;
   at: number;
 }
@@ -106,6 +108,9 @@ interface ActiveShare {
   /** The owner's drawing, encoded — restored on resume so a reload never
       quietly loses what was drawn against a still-live code. */
   sketch: string | null;
+  /** The marked spot, likewise. */
+  marker: Position | null;
+  markerIcon: MarkerIcon;
 }
 
 const ACTIVE_KEY = 'activeShare';
@@ -191,12 +196,27 @@ export function Share() {
   const [note, setNote] = useState('');
   /** The caller's drawing. Anchored at the pin when the first shape lands. */
   const [sketch, setSketch] = useState<Sketch | null>(null);
+  /** The spot the caller MARKED — "it's here" — never where they are. */
+  const [marker, setMarker] = useState<Position | null>(null);
+  const [markerIcon, setMarkerIcon] = useState<MarkerIcon>('spot');
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   /** Requested lifetime of the code. The server clamps it regardless. */
   const [ttl, setTtl] = useState(1800);
   /** Local-only label for the history list — see PastShare.name. */
   const [shareName, setShareName] = useState('');
   /** The owner's live map is open over the code screen. */
   const [liveOpen, setLiveOpen] = useState(false);
+  const adoptLiveMarker = useCallback((next: Position | null, icon: MarkerIcon) => {
+    setMarker(next);
+    setMarkerIcon(icon);
+    setResumable((current) => {
+      if (current === null) return current;
+      const updated = { ...current, marker: next, markerIcon: icon };
+      persistActiveShare(updated);
+      return updated;
+    });
+  }, []);
+
   /** Drawings made IN the live map survive leaving it and reloading. */
   const adoptLiveSketch = useCallback((next: Sketch | null) => {
     setSketch(next);
@@ -222,6 +242,10 @@ export function Share() {
   sheetPanelRef.current = sheetPanel;
   const sketchRef = useRef(sketch);
   sketchRef.current = sketch;
+  const markerRef = useRef(marker);
+  markerRef.current = marker;
+  const markerIconRef = useRef(markerIcon);
+  markerIconRef.current = markerIcon;
   /** Where the flow is, coarsely — drives what Back means right now. */
   const phaseGroupRef = useRef<'start' | 'placed' | 'done'>('start');
   const [history, setHistory] = useState<PastShare[]>(loadHistory);
@@ -340,6 +364,8 @@ export function Share() {
         name: shareName.trim(),
         note: note.trim(),
         sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
+        marker,
+        markerIcon,
         thirdParty,
         at: Date.now(),
       };
@@ -349,7 +375,7 @@ export function Share() {
         return next;
       });
     },
-    [note, sketch, thirdParty, shareName],
+    [note, sketch, marker, markerIcon, thirdParty, shareName],
   );
 
   const clearHistory = useCallback(() => {
@@ -447,6 +473,8 @@ export function Share() {
       setShareName(entry.name ?? '');
       setNote(entry.note);
       setSketch(entry.sketch !== null ? decodeSketch(entry.sketch) : null);
+      setMarker(entry.marker ?? null);
+      setMarkerIcon(entry.markerIcon ?? 'spot');
       setPhase({
         name: 'located',
         position: {
@@ -505,6 +533,7 @@ export function Share() {
         ttlSeconds: ttl,
         ...(note.trim() !== '' ? { note: note.trim() } : {}),
         ...(sketchPayload !== undefined ? { sketch: sketchPayload } : {}),
+        ...(marker !== null ? { marker, markerIcon } : {}),
       });
 
       if (!result.ok) {
@@ -533,12 +562,14 @@ export function Share() {
         mode,
         position,
         sketch: sketchPayload ?? null,
+        marker,
+        markerIcon,
       };
       setResumable(active);
       persistActiveShare(active);
       setPhase({ name: 'shared', position, session: result.data, spokenOfflineCode });
     },
-    [mode, thirdParty, note, sketch, ttl, fallToOfflineCode, recordShare, reportReachable, reportUnreachable],
+    [mode, thirdParty, note, sketch, marker, markerIcon, ttl, fallToOfflineCode, recordShare, reportReachable, reportUnreachable],
   );
 
   const share = useCallback(() => {
@@ -590,6 +621,7 @@ export function Share() {
         // An unencodable sketch stays local.
       }
     }
+    if (markerRef.current !== null) handle.sendMarker(markerRef.current, markerIconRef.current);
     watchRef.current = navigator.geolocation.watchPosition(
       (fix) => {
         handle.sendPosition({
@@ -620,6 +652,9 @@ export function Share() {
     setStopFailure(null);
     setKeepingOfflineCode(false);
     setSketch(null);
+    setMarker(null);
+    setMarkerIcon('spot');
+    setIconPickerOpen(false);
     setLiveOpen(false);
     setLiveError(null);
     setPhase({ name: 'idle' });
@@ -686,7 +721,10 @@ export function Share() {
         {...(shareName.trim() !== '' ? { name: shareName.trim() } : {})}
         initialPosition={phase.position}
         initialSketch={sketch}
+        initialMarker={marker}
+        initialMarkerIcon={markerIcon}
         onSketchShared={adoptLiveSketch}
+        onMarkerShared={adoptLiveMarker}
         onLeave={() => setLiveOpen(false)}
       />
     );
@@ -717,10 +755,36 @@ export function Share() {
           sketch={located ? sketch : null}
           fullscreenLocked
           className="map map-fill"
+          moveOnClick={false}
+          {...(located && marker !== null
+            ? {
+                placedMarkers: [
+                  {
+                    id: 'my-marker',
+                    label: shareName.trim() !== '' ? shareName.trim() : 'Spot',
+                    position: marker,
+                    icon: markerIcon,
+                    onTap: () => setIconPickerOpen(true),
+                  },
+                ],
+              }
+            : {})}
           {...(located
             ? {
                 onLocate: relocate,
                 onSketchChange: setSketch,
+                markerOnClick: true,
+                onPlaceMarker: (lat: number, lon: number, accuracyM: number) => {
+                  // A tap is "the spot I mean is HERE" — the pin is a person
+                  // and taps never move people.
+                  setMarker({
+                    lat,
+                    lon,
+                    accuracyM,
+                    source: 'manual',
+                    takenAt: new Date().toISOString(),
+                  });
+                },
                 // A hand-placed pin is a deliberate choice, not a sensor
                 // guess — its accuracy comes from the zoom, which the Map
                 // computes. Stop any GNSS refinement so it can't drag the
@@ -745,6 +809,17 @@ export function Share() {
             located ? (
               <LocatedSheet
                 position={phase.position}
+                marker={marker}
+                markerIcon={markerIcon}
+                iconPickerOpen={iconPickerOpen}
+                onPickIcon={(icon) => {
+                  setMarkerIcon(icon);
+                  setIconPickerOpen(false);
+                }}
+                onRemoveMarker={() => {
+                  setMarker(null);
+                  setIconPickerOpen(false);
+                }}
                 minting={phase.name === 'minting'}
                 acquiring={acquiring}
                 online={online}
@@ -795,6 +870,8 @@ export function Share() {
                       onClick={() => {
                         setMode(resumable.mode);
                         setSketch(resumable.sketch !== null ? decodeSketch(resumable.sketch) : null);
+                        setMarker(resumable.marker ?? null);
+                        setMarkerIcon(resumable.markerIcon ?? 'spot');
                         setPhase({
                           name: 'shared',
                           position: resumable.position,
@@ -1022,6 +1099,9 @@ export function Share() {
         sketch={sketch}
         fitSketch
         allowFullscreen
+        {...(marker !== null
+          ? { placedMarkers: [{ id: 'my-marker', label: 'Spot', position: marker, icon: markerIcon }] }
+          : {})}
         fullscreenOverlay={
           <div className="map-sheet map-sheet-code">
             <p className="map-code-line">{formatCode(session.code)}</p>
@@ -1043,6 +1123,11 @@ export function Share() {
  */
 function LocatedSheet({
   position,
+  marker,
+  markerIcon,
+  iconPickerOpen,
+  onPickIcon,
+  onRemoveMarker,
   minting,
   acquiring,
   online,
@@ -1063,6 +1148,11 @@ function LocatedSheet({
   onShare,
 }: {
   position: Position;
+  marker: Position | null;
+  markerIcon: MarkerIcon;
+  iconPickerOpen: boolean;
+  onPickIcon: (icon: MarkerIcon) => void;
+  onRemoveMarker: () => void;
   minting: boolean;
   acquiring: boolean;
   online: boolean;
@@ -1091,14 +1181,30 @@ function LocatedSheet({
           search appears only in that flow, and only with a connection. */}
       {thirdParty && online && <PlaceSearch onPick={onSearchPick} />}
 
-      {!online && sketch !== null && sketch.shapes.length > 0 && (
+      {!online && ((sketch !== null && sketch.shapes.length > 0) || marker !== null) && (
         <div className="notice notice-offline">
-          <strong>Your drawing stays on this phone.</strong>
+          <strong>Your drawing and marked spot stay on this phone.</strong>
           <span>
-            An offline code carries a position and nothing else — there is no server to hold the
-            drawing. Describe it out loud instead, or get an expiring code when you have signal.
+            An offline code carries a position and nothing else — there is no server to hold them.
+            Describe them out loud instead, or get an expiring code when you have signal.
           </span>
         </div>
+      )}
+
+      {iconPickerOpen && marker !== null && (
+        <div className="sheet-panel">
+          <span className="panel-title">What is this spot?</span>
+          <MarkerIconPicker current={markerIcon} onPick={onPickIcon} />
+        </div>
+      )}
+
+      {marker !== null && (
+        <p className="marker-row">
+          A spot is marked. Tap the map to move it; tap the diamond to say what it is.
+          <button className="link-button" onClick={onRemoveMarker}>
+            Remove it
+          </button>
+        </p>
       )}
 
       {/* A GNSS fix that settled poor. Manual pins are excluded — they are as

@@ -388,7 +388,21 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         fitSketch
         allowFullscreen
         showViewerLocation
+        {...(session.marker !== undefined
+          ? {
+              placedMarkers: [
+                { id: 'caller-marker', label: 'Spot', position: session.marker, icon: session.markerIcon },
+              ],
+            }
+          : {})}
       />
+
+      {session.marker !== undefined && (
+        <p className="sketch-provenance">
+          <strong>The caller marked a spot.</strong> The diamond is somewhere they pointed out —
+          not where they are.
+        </p>
+      )}
 
       {sketch !== null && (
         <p className="sketch-provenance">

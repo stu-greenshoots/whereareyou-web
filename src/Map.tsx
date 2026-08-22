@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import L from 'leaflet';
-import { MAX_SKETCH_CHARS, MAX_SKETCH_SHAPES, encodeSketch, sketchBounds } from '@whereareyou/protocol';
-import type { Sketch, SketchColour } from '@whereareyou/protocol';
+import { MARKER_ICONS, MAX_SKETCH_CHARS, MAX_SKETCH_SHAPES, encodeSketch, sketchBounds } from '@whereareyou/protocol';
+import type { MarkerIcon, Sketch, SketchColour } from '@whereareyou/protocol';
 import { SKETCH_INKS, attachSketch, type SketchHandle } from './sketch-layer.js';
 import {
   beginStroke,
@@ -80,14 +80,65 @@ export interface PlacedMarker {
   id: string;
   label?: string | undefined;
   position: { lat: number; lon: number };
+  /** What the spot IS; without one the diamond shows the placer's initial. */
+  icon?: MarkerIcon | undefined;
+  /** Tapping the diamond — how "tap your marker to change its icon" works. */
+  onTap?: (() => void) | undefined;
 }
 
-function placedIcon(label: string | undefined): L.DivIcon {
-  const first = (label ?? '').trim().charAt(0).toUpperCase();
-  const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
+/**
+ * The glyph inside a placed diamond, per icon. Inline SVG strings because
+ * they go through Leaflet's divIcon html; each must read at 12px outdoors.
+ */
+export const MARKER_GLYPHS: Record<MarkerIcon, string> = {
+  spot: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="3" fill="currentColor"/></svg>',
+  warning:
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.2 11 10.5H1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><line x1="6" y1="4.6" x2="6" y2="7.2" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="8.9" r="0.9" fill="currentColor"/></svg>',
+  flag: '<svg viewBox="0 0 12 12" aria-hidden="true"><line x1="3" y1="1.5" x2="3" y2="10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M3 2h6L7.2 4 9 6H3Z" fill="currentColor"/></svg>',
+  cross:
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.8 1.5h2.4v3.3h3.3v2.4H7.2v3.3H4.8V7.2H1.5V4.8h3.3Z" fill="currentColor"/></svg>',
+  car: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 7l1.2-3h5.6L10 7v2.3H2Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="4" cy="9.6" r="1" fill="currentColor"/><circle cx="8" cy="9.6" r="1" fill="currentColor"/></svg>',
+  house:
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6l4-4 4 4v4.5H2Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+};
+
+/** The icon chooser — shared by the share sheet and the live room. */
+export function MarkerIconPicker({
+  current,
+  onPick,
+}: {
+  current: MarkerIcon;
+  onPick: (icon: MarkerIcon) => void;
+}) {
+  return (
+    <div className="icon-pick" role="menu" aria-label="What is this spot?">
+      {MARKER_ICONS.map((name) => (
+        <button
+          key={name}
+          type="button"
+          className={`sheet-icon ${current === name ? 'sheet-icon-active' : ''}`}
+          aria-label={name}
+          title={name}
+          onClick={() => onPick(name)}
+          dangerouslySetInnerHTML={{ __html: MARKER_GLYPHS[name] }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function placedIcon(label: string | undefined, icon: MarkerIcon | undefined): L.DivIcon {
+  let inner: string;
+  if (icon !== undefined && MARKER_GLYPHS[icon] !== undefined) {
+    inner = `<span class="placed-marker-glyph">${MARKER_GLYPHS[icon]}</span>`;
+  } else {
+    const first = (label ?? '').trim().charAt(0).toUpperCase();
+    const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
+    inner = `<span>${initial}</span>`;
+  }
   return L.divIcon({
     className: 'placed-marker-icon',
-    html: `<span class="placed-marker"><span>${initial}</span></span>`,
+    html: `<span class="placed-marker">${inner}</span>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   });
@@ -175,9 +226,20 @@ export interface MapProps {
   placedMarkers?: PlacedMarker[];
   /**
    * Adds a place-a-point tool to the toolbar: tap the tool, tap the map, the
-   * point lands there and the tool puts itself down. One shot per pick.
+   * point lands there and the tool puts itself down. Fires with a placement
+   * accuracy derived from the zoom, like a hand-placed pin.
    */
-  onPlaceMarker?: (lat: number, lon: number) => void;
+  onPlaceMarker?: (lat: number, lon: number, accuracyM: number) => void;
+  /**
+   * A plain tap (no tool active) places the marker too — the share screen's
+   * "the spot I mean is here" gesture. Needs onPlaceMarker.
+   */
+  markerOnClick?: boolean;
+  /**
+   * Whether a plain click may move the PIN. Off wherever a click means
+   * "mark a spot" instead — the pin is a person, and it stays one.
+   */
+  moveOnClick?: boolean;
   /**
    * Adds an expand control that takes the map full screen — for the look-up
    * side, whose map is small, and for drawing, where a 280px strip is a
@@ -217,6 +279,8 @@ export function Map({
   remoteSketches,
   placedMarkers,
   onPlaceMarker,
+  markerOnClick = false,
+  moveOnClick = true,
   allowFullscreen = false,
   showViewerLocation = false,
   className,
@@ -270,6 +334,7 @@ export function Map({
   const peerLayersRef = useRef<Record<string, { marker: L.Marker; circle: L.Circle }>>({});
   const remoteSketchesRef = useRef<Record<string, SketchHandle>>({});
   const placedLayersRef = useRef<Record<string, L.Marker>>({});
+  const placedTapsRef = useRef<Record<string, (() => void) | undefined>>({});
   const onPlaceMarkerRef = useRef(onPlaceMarker);
   onPlaceMarkerRef.current = onPlaceMarker;
 
@@ -455,16 +520,23 @@ export function Map({
     const seen = new Set<string>();
     for (const placed of placedMarkers ?? []) {
       seen.add(placed.id);
+      placedTapsRef.current[placed.id] = placed.onTap;
       const at: [number, number] = [placed.position.lat, placed.position.lon];
       const existing = layers[placed.id];
       if (existing === undefined) {
-        layers[placed.id] = L.marker(at, {
-          icon: placedIcon(placed.label),
-          interactive: false,
+        const created = L.marker(at, {
+          icon: placedIcon(placed.label, placed.icon),
+          interactive: placed.onTap !== undefined,
           keyboard: false,
         }).addTo(map);
+        if (placed.onTap !== undefined) {
+          const id = placed.id;
+          created.on('click', () => placedTapsRef.current[id]?.());
+        }
+        layers[placed.id] = created;
       } else {
         existing.setLatLng(at);
+        existing.setIcon(placedIcon(placed.label, placed.icon));
       }
     }
     for (const id of Object.keys(layers)) {
@@ -475,19 +547,26 @@ export function Map({
     }
   }, [map, placedMarkers]);
 
-  // The marker tool: tap the map, the point lands, the tool puts itself down.
+  // The marker tool — and, where markerOnClick says so, the plain tap: the
+  // point lands, the tool (if one was up) puts itself down.
   useEffect(() => {
     if (map === null || onPlaceMarker === undefined) return;
     const handler = (event: L.LeafletMouseEvent) => {
-      if (activeToolRef.current !== 'marker') return;
-      onPlaceMarkerRef.current?.(event.latlng.lat, event.latlng.lng);
-      setActiveTool('none');
+      const tool = activeToolRef.current;
+      const viaTool = tool === 'marker';
+      if (!viaTool && !(markerOnClick && tool === 'none')) return;
+      onPlaceMarkerRef.current?.(
+        event.latlng.lat,
+        event.latlng.lng,
+        placementAccuracy(event.latlng.lat, map.getZoom()),
+      );
+      if (viaTool) setActiveTool('none');
     };
     map.on('click', handler);
     return () => {
       map.off('click', handler);
     };
-  }, [map, onPlaceMarker]);
+  }, [map, onPlaceMarker, markerOnClick]);
 
   // Entering or leaving full screen resizes the container out from under
   // Leaflet, which measures once. Re-measure after the new layout applies.
@@ -528,7 +607,10 @@ export function Map({
   // The moment the wide-open start map gets its first real fix, jump to
   // street level — the view change IS the feedback that locating worked.
   useEffect(() => {
-    if (map !== null && !hidePin && !hadPinRef.current) map.setView([lat, lon], 17);
+    // animate: false is load-bearing — event.latlng is unreliable while a
+    // zoom animation runs, so a tap in that window would place a marker
+    // somewhere absurd. A jump-cut has no such window.
+    if (map !== null && !hidePin && !hadPinRef.current) map.setView([lat, lon], 17, { animate: false });
     hadPinRef.current = !hidePin;
   }, [map, hidePin, lat, lon]);
 
@@ -549,7 +631,7 @@ export function Map({
 
   // Allow map clicks to reposition the pin when the map is editable.
   useEffect(() => {
-    if (map === null || onMove === undefined) return;
+    if (map === null || onMove === undefined || !moveOnClick) return;
 
     const handler = (event: L.LeafletMouseEvent) => {
       // While a draw tool is active a tap is a stroke, not a pin move — the
@@ -562,7 +644,7 @@ export function Map({
     return () => {
       map.off('click', handler);
     };
-  }, [map, onMove]);
+  }, [map, onMove, moveOnClick]);
 
   // The drawing interaction: pointer events on the map container while a tool
   // is active. Panning and double-click zoom are handed back on cleanup.

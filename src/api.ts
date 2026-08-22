@@ -86,6 +86,8 @@ export interface MintOptions {
   ttlSeconds?: number;
   /** Encoded sketch (see the protocol's sketch codec). Opaque to the server. */
   sketch?: string;
+  /** The spot the sharer marked — not where they are. */
+  marker?: Position;
 }
 
 export function mintSession(options: MintOptions): Promise<ApiResult<CreateSessionResponse>> {

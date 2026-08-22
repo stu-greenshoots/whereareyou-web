@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decodeSketch, encodeSketch } from '@whereareyou/protocol';
-import type { LiveParticipant, Position, Sketch } from '@whereareyou/protocol';
+import type { LiveParticipant, MarkerIcon, Position, Sketch } from '@whereareyou/protocol';
 import { connectLive, type LiveHandle } from './live.js';
-import { Map, type MapPeer, type PlacedMarker } from './Map.jsx';
+import { Map, MarkerIconPicker, type MapPeer, type PlacedMarker } from './Map.jsx';
 import { inferSource, timeRemaining } from './formats.js';
 
 /**
@@ -24,9 +24,13 @@ export interface SessionMapProps {
   name?: string;
   initialPosition: { lat: number; lon: number; accuracyM: number };
   initialSketch?: Sketch | null;
+  initialMarker?: Position | null;
+  initialMarkerIcon?: MarkerIcon;
   /** Fires on every committed change to OUR drawing, so the parent can keep
       it when this screen closes (and persist it across reloads). */
   onSketchShared?: (sketch: Sketch | null) => void;
+  /** Same, for our marked spot. */
+  onMarkerShared?: (marker: Position | null, icon: MarkerIcon) => void;
   onLeave: () => void;
 }
 
@@ -39,7 +43,10 @@ export function SessionMap({
   name,
   initialPosition,
   initialSketch = null,
+  initialMarker = null,
+  initialMarkerIcon = 'spot',
   onSketchShared,
+  onMarkerShared,
   onLeave,
 }: SessionMapProps) {
   const [participants, setParticipants] = useState<Record<string, LiveParticipant>>({});
@@ -50,7 +57,9 @@ export function SessionMap({
   const [mySketch, setMySketch] = useState<Sketch | null>(initialSketch);
   const [myPosition, setMyPosition] = useState<Position | null>(null);
   /** The point I placed — a claim about the world, never where I am. */
-  const [myMarker, setMyMarker] = useState<Position | null>(null);
+  const [myMarker, setMyMarker] = useState<Position | null>(initialMarker);
+  const [myMarkerIcon, setMyMarkerIcon] = useState<MarkerIcon>(initialMarkerIcon);
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [, forceTick] = useState(0);
   const handleRef = useRef<LiveHandle | null>(null);
   const selfIdRef = useRef<string | null>(null);
@@ -96,7 +105,8 @@ export function SessionMap({
       },
     });
     handleRef.current = handle;
-    // A restored drawing exists only in local state until it travels once.
+    // Restored drawings and markers exist only in local state until they
+    // travel once.
     if (initialSketch !== null && initialSketch.shapes.length > 0) {
       try {
         handle.sendSketch(encodeSketch(initialSketch));
@@ -104,6 +114,7 @@ export function SessionMap({
         // Stays local.
       }
     }
+    if (initialMarker !== null) handle.sendMarker(initialMarker, initialMarkerIcon);
     return () => {
       handleRef.current = null;
       handle.close();
@@ -133,17 +144,34 @@ export function SessionMap({
     return () => navigator.geolocation.clearWatch(watch);
   }, [share]);
 
-  const placeMarker = useCallback((lat: number, lon: number) => {
-    const position: Position = {
-      lat,
-      lon,
-      accuracyM: 10,
-      source: 'manual',
-      takenAt: new Date().toISOString(),
-    };
-    setMyMarker(position);
-    handleRef.current?.sendMarker(position);
-  }, []);
+  const placeMarker = useCallback(
+    (lat: number, lon: number, accuracyM: number) => {
+      const position: Position = {
+        lat,
+        lon,
+        accuracyM,
+        source: 'manual',
+        takenAt: new Date().toISOString(),
+      };
+      setMyMarker(position);
+      onMarkerShared?.(position, myMarkerIcon);
+      handleRef.current?.sendMarker(position, myMarkerIcon);
+    },
+    [onMarkerShared, myMarkerIcon],
+  );
+
+  const pickIcon = useCallback(
+    (icon: MarkerIcon) => {
+      setMyMarkerIcon(icon);
+      setIconPickerOpen(false);
+      const current = myMarker;
+      if (current !== null) {
+        onMarkerShared?.(current, icon);
+        handleRef.current?.sendMarker(current, icon);
+      }
+    },
+    [myMarker, onMarkerShared],
+  );
 
   // The room spreads by its link — same shape as the code screen's share.
   const shareRoom = useCallback(async () => {
@@ -198,11 +226,19 @@ export function SessionMap({
     const points: PlacedMarker[] = [];
     for (const entry of roster) {
       if (entry.id === selfId || entry.marker === undefined) continue;
-      points.push({ id: entry.id, label: entry.name, position: entry.marker });
+      points.push({ id: entry.id, label: entry.name, position: entry.marker, icon: entry.markerIcon });
     }
-    if (myMarker !== null) points.push({ id: 'self-marker', label: name ?? 'Me', position: myMarker });
+    if (myMarker !== null) {
+      points.push({
+        id: 'self-marker',
+        label: name ?? 'Me',
+        position: myMarker,
+        icon: myMarkerIcon,
+        onTap: () => setIconPickerOpen(true),
+      });
+    }
     return points;
-  }, [roster, selfId, myMarker, name]);
+  }, [roster, selfId, myMarker, myMarkerIcon, name]);
 
   const remoteSketches = useMemo(() => {
     const decoded: Array<{ id: string; sketch: Sketch }> = [];
@@ -233,6 +269,13 @@ export function SessionMap({
         fullscreenLocked
         className="map map-fill"
         fullscreenOverlay={
+          <>
+            {iconPickerOpen && myMarker !== null && (
+              <div className="map-sheet">
+                <span className="panel-title">What is this spot?</span>
+                <MarkerIconPicker current={myMarkerIcon} onPick={pickIcon} />
+              </div>
+            )}
           <div className="map-sheet map-sheet-code live-bar">
             <div className="live-bar-code">
               <p className="map-code-line">{displayCode}</p>
@@ -257,6 +300,7 @@ export function SessionMap({
               </button>
             </div>
           </div>
+          </>
         }
       />
     </div>

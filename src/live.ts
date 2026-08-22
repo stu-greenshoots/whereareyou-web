@@ -1,4 +1,4 @@
-import type { LiveParticipant, LiveServerMessage, Position } from '@whereareyou/protocol';
+import type { LiveParticipant, LiveServerMessage, MarkerIcon, Position } from '@whereareyou/protocol';
 
 /**
  * The client end of a live room: one socket, typed handlers, and reconnection
@@ -21,7 +21,7 @@ export interface LiveHandlers {
 export interface LiveHandle {
   sendPosition(position: Position): void;
   /** Place, or with null clear, our single placed marker. */
-  sendMarker(position: Position | null): void;
+  sendMarker(position: Position | null, icon?: MarkerIcon): void;
   sendSketch(sketch: string): void;
   close(): void;
 }
@@ -53,7 +53,7 @@ export function connectLive(options: {
   // Replayed on every rejoin — see the header comment.
   let lastPosition: Position | null = null;
   let lastSketch: string | null = null;
-  let lastMarker: Position | null | undefined; // undefined = never placed
+  let lastMarker: { position: Position | null; icon?: MarkerIcon } | undefined; // undefined = never placed
 
   const end = (reason: 'expired' | 'refused' | 'failed', detail?: string): void => {
     if (ended) return;
@@ -92,7 +92,7 @@ export function connectLive(options: {
         handlers.onStatus(true);
         handlers.onWelcome(message.participantId, message.expiresAt, message.roster);
         if (lastPosition !== null) ws.send(JSON.stringify({ type: 'position', position: lastPosition }));
-        if (lastMarker !== undefined) ws.send(JSON.stringify({ type: 'marker', position: lastMarker }));
+        if (lastMarker !== undefined) ws.send(JSON.stringify({ type: 'marker', ...lastMarker }));
         if (lastSketch !== null) ws.send(JSON.stringify({ type: 'sketch', sketch: lastSketch }));
       } else if (message.type === 'participant') {
         handlers.onParticipant(message.participant);
@@ -131,10 +131,10 @@ export function connectLive(options: {
         socket.send(JSON.stringify({ type: 'position', position }));
       }
     },
-    sendMarker(position) {
-      lastMarker = position;
+    sendMarker(position, icon) {
+      lastMarker = { position, ...(icon !== undefined ? { icon } : {}) };
       if (socket !== null && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'marker', position }));
+        socket.send(JSON.stringify({ type: 'marker', ...lastMarker }));
       }
     },
     sendSketch(sketch) {
