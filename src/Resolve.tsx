@@ -189,9 +189,13 @@ export function Resolve() {
     sessionStorage.setItem('resolverKey', value);
   }, []);
 
-  // Joined: the room takes the whole screen until they leave. This is the
-  // console surface, so the live map keeps its dark tiles; a watcher
-  // (share: false — the dispatcher's posture) gets a read-only chat panel.
+  // Joined: the room takes the whole screen until they leave. The live
+  // session view is a PARTICIPANT surface — someone joining or watching a
+  // shared map — so it reads light (Voyager), same as the owner's map
+  // ("it's better light" — field report). Dark Matter stays on the static
+  // resolved-location panels below: the operator's control-room read. A
+  // watcher (share: false — the dispatcher's posture) still gets the
+  // read-only chat panel.
   if (session !== null && live !== null) {
     return (
       <SessionMap
@@ -199,7 +203,6 @@ export function Resolve() {
         displayCode={formatCode(session.code)}
         role="joiner"
         share={live.share}
-        tiles="dark"
         {...(live.name !== '' ? { name: live.name } : {})}
         {...(account.avatar !== null ? { avatar: account.avatar } : {})}
         {...(deepPanel !== null ? { initialPanel: deepPanel } : {})}

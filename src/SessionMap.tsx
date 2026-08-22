@@ -310,17 +310,30 @@ export function SessionMap({
       pendingChatRef.current = [];
       for (const entry of welcome.roster) registerParticipant(entry);
       for (const zone of welcome.zones) zoneNamesRef.current[zone.id] = zone.name;
-      setParticipants(Object.fromEntries(welcome.roster.map((entry) => [entry.id, entry])));
+      // When WE are the owner, any owner-flagged roster entry is a previous
+      // connection of ours — being owner takes the updateToken, and only this
+      // device holds it. The code screen's headless socket mid-close, or a
+      // zombie the server has not reaped, must not stand beside the
+      // synthesized self ("Stu" + "You", both sharer — the field-observed
+      // duplicate). Registered above so old chat/events keep their name;
+      // never rendered as a person.
+      const roster =
+        role === 'owner' ? welcome.roster.filter((entry) => !entry.owner) : welcome.roster;
+      setParticipants(Object.fromEntries(roster.map((entry) => [entry.id, entry])));
       setChat(welcome.chat);
       setZones(welcome.zones);
       setEvents(welcome.events.slice(-MAX_EVENT_HISTORY));
     },
-    [registerParticipant],
+    [registerParticipant, role],
   );
 
   const applyParticipant = useCallback(
     (participant: LiveParticipant) => {
       if (participant.id === selfIdRef.current) return; // our own echo, if any
+      // Same rule as the welcome filter: we hold the updateToken, so an
+      // owner-flagged frame under another id is a stale connection of ours,
+      // not a second person. Never let it stand beside the synthesized self.
+      if (role === 'owner' && participant.owner) return;
       registerParticipant(participant);
       setParticipants((current) => {
         // Trails arrive in the welcome only; later frames would erase them.
@@ -338,7 +351,7 @@ export function SessionMap({
         return { ...current, [participant.id]: { ...participant, trail } };
       });
     },
-    [registerParticipant],
+    [registerParticipant, role],
   );
 
   const applyLeft = useCallback((participantId: string) => {
