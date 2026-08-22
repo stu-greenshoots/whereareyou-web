@@ -836,7 +836,9 @@ body.map-first .main { padding: 0; display: flex; flex-direction: column; }
 body.map-first .footer { display: none; }
 .share-stage { flex: 1; display: flex; min-height: 0; }
 .share-stage .map-frame { flex: 1; }
-.map-fill { height: 100%; border-radius: 0; border: none; }
+/* Doubled selector on purpose: .theme-console .map sets a fixed height with
+   two-class specificity, and a full-screen map must beat it in any theme. */
+.map.map-fill { height: 100%; border-radius: 0; border: none; }
 
 /* The floating sheet at the foot of a full-screen map. */
 .map-sheet {
@@ -1077,3 +1079,28 @@ body.map-first .header { display: none; }
 
 .join-prompt { display: flex; flex-direction: column; }
 .join-prompt .note-input { margin-top: 8px; }
+
+/* A placed point: a diamond with the placer's initial — a claim about the
+   world, visually nothing like the live dots. */
+.placed-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  transform: rotate(45deg);
+  background: #fff;
+  border: 2.5px solid #475569;
+  border-radius: 4px;
+  box-shadow: 0 1px 4px #0006;
+}
+.placed-marker span {
+  transform: rotate(-45deg);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.live-bar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.resume-chip { box-shadow: 0 4px 14px #0005; }

@@ -72,6 +72,27 @@ export interface MapPeer {
 
 const PEER_COLOUR = '#475569';
 
+/**
+ * A PLACED point — a claim about the world ("the entrance is here"), never a
+ * live fix. Diamond, not dot, so the two can't be confused at a glance.
+ */
+export interface PlacedMarker {
+  id: string;
+  label?: string | undefined;
+  position: { lat: number; lon: number };
+}
+
+function placedIcon(label: string | undefined): L.DivIcon {
+  const first = (label ?? '').trim().charAt(0).toUpperCase();
+  const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
+  return L.divIcon({
+    className: 'placed-marker-icon',
+    html: `<span class="placed-marker"><span>${initial}</span></span>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
+}
+
 function peerIcon(label: string | undefined): L.DivIcon {
   const first = (label ?? '').trim().charAt(0).toUpperCase();
   // One character, strictly alphanumeric — this goes into innerHTML.
@@ -150,6 +171,13 @@ export interface MapProps {
   peers?: MapPeer[];
   /** Other participants' drawings, one handle per participant. */
   remoteSketches?: Array<{ id: string; sketch: Sketch }>;
+  /** Placed points from the live room, drawn as initialled diamonds. */
+  placedMarkers?: PlacedMarker[];
+  /**
+   * Adds a place-a-point tool to the toolbar: tap the tool, tap the map, the
+   * point lands there and the tool puts itself down. One shot per pick.
+   */
+  onPlaceMarker?: (lat: number, lon: number) => void;
   /**
    * Adds an expand control that takes the map full screen — for the look-up
    * side, whose map is small, and for drawing, where a 280px strip is a
@@ -187,6 +215,8 @@ export function Map({
   fullscreenOverlay,
   peers,
   remoteSketches,
+  placedMarkers,
+  onPlaceMarker,
   allowFullscreen = false,
   showViewerLocation = false,
   className,
@@ -214,7 +244,7 @@ export function Map({
   // Drawing state. The active tool lives in state (the toolbar renders from
   // it); everything the pointer handlers need is mirrored into refs so the
   // handlers never close over a stale sketch.
-  const [activeTool, setActiveTool] = useState<DrawTool | 'none'>('none');
+  const [activeTool, setActiveTool] = useState<DrawTool | 'none' | 'marker'>('none');
   const [ink, setInk] = useState<SketchColour>(0);
   const [inkOpen, setInkOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -239,6 +269,9 @@ export function Map({
   // Records, not Maps — the global Map is shadowed by this component's name.
   const peerLayersRef = useRef<Record<string, { marker: L.Marker; circle: L.Circle }>>({});
   const remoteSketchesRef = useRef<Record<string, SketchHandle>>({});
+  const placedLayersRef = useRef<Record<string, L.Marker>>({});
+  const onPlaceMarkerRef = useRef(onPlaceMarker);
+  onPlaceMarkerRef.current = onPlaceMarker;
 
   useEffect(() => {
     if (containerRef.current === null) return;
@@ -274,6 +307,7 @@ export function Map({
       viewerCircleRef.current = null;
       peerLayersRef.current = {};
       remoteSketchesRef.current = {};
+      placedLayersRef.current = {};
       fittedSketchRef.current = false;
     };
     // Created once per mount; position changes are handled by the effect below.
@@ -414,6 +448,47 @@ export function Map({
     }
   }, [map, remoteSketches]);
 
+  // Sync the placed markers.
+  useEffect(() => {
+    if (map === null) return;
+    const layers = placedLayersRef.current;
+    const seen = new Set<string>();
+    for (const placed of placedMarkers ?? []) {
+      seen.add(placed.id);
+      const at: [number, number] = [placed.position.lat, placed.position.lon];
+      const existing = layers[placed.id];
+      if (existing === undefined) {
+        layers[placed.id] = L.marker(at, {
+          icon: placedIcon(placed.label),
+          interactive: false,
+          keyboard: false,
+        }).addTo(map);
+      } else {
+        existing.setLatLng(at);
+      }
+    }
+    for (const id of Object.keys(layers)) {
+      if (!seen.has(id)) {
+        layers[id]!.remove();
+        delete layers[id];
+      }
+    }
+  }, [map, placedMarkers]);
+
+  // The marker tool: tap the map, the point lands, the tool puts itself down.
+  useEffect(() => {
+    if (map === null || onPlaceMarker === undefined) return;
+    const handler = (event: L.LeafletMouseEvent) => {
+      if (activeToolRef.current !== 'marker') return;
+      onPlaceMarkerRef.current?.(event.latlng.lat, event.latlng.lng);
+      setActiveTool('none');
+    };
+    map.on('click', handler);
+    return () => {
+      map.off('click', handler);
+    };
+  }, [map, onPlaceMarker]);
+
   // Entering or leaving full screen resizes the container out from under
   // Leaflet, which measures once. Re-measure after the new layout applies.
   useEffect(() => {
@@ -495,7 +570,7 @@ export function Map({
   // touch events, which pointer capture does not intercept); a second pointer
   // arriving MID-stroke abandons the stroke, so a pinch never leaves ink.
   useEffect(() => {
-    if (map === null || activeTool === 'none' || onSketchChange === undefined) return;
+    if (map === null || activeTool === 'none' || activeTool === 'marker' || onSketchChange === undefined) return;
 
     const container = map.getContainer();
     const previousTouchAction = container.style.touchAction;
@@ -532,7 +607,7 @@ export function Map({
       }
       pointerId = event.pointerId;
       container.setPointerCapture(event.pointerId);
-      stroke = beginStroke(activeTool, toPoint(event));
+      stroke = beginStroke(activeTool as DrawTool, toPoint(event));
       event.preventDefault();
     };
 
@@ -776,6 +851,21 @@ export function Map({
               {toolButton('pen', 'Draw freehand', <PenIcon />)}
               {toolButton('arrow', 'Draw an arrow', <ArrowIcon />)}
               {toolButton('circle', 'Draw a circle', <CircleIcon />)}
+              {onPlaceMarker !== undefined && (
+                <button
+                  type="button"
+                  className={`map-tool ${activeTool === 'marker' ? 'map-tool-active' : ''}`}
+                  aria-label="Place a point"
+                  aria-pressed={activeTool === 'marker'}
+                  title="Place a point"
+                  onClick={() => {
+                    setInkOpen(false);
+                    setActiveTool((current) => (current === 'marker' ? 'none' : 'marker'));
+                  }}
+                >
+                  <PointIcon />
+                </button>
+              )}
               <span className="map-tools-rule" aria-hidden="true" />
               {/* One swatch; the palette pops UPWARD so the toolbar stays
                   one row and the map keeps the screen. */}
@@ -893,6 +983,15 @@ function CollapseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PointIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 21s-6.5-6.2-6.5-10.5a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <circle cx="12" cy="10.4" r="2.2" fill="currentColor" />
     </svg>
   );
 }

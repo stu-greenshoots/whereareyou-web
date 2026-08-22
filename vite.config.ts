@@ -23,7 +23,9 @@ export default defineConfig({
   base: process.env['VITE_BASE'] ?? '/',
   plugins: [
     react(),
-    basicSsl(),
+    // VITE_HTTP=1 runs a plain-http instance (localhost is a secure context
+    // without TLS) — used for browser-automation checks; phones keep 5173.
+    ...(process.env['VITE_HTTP'] === '1' ? [] : [basicSsl()]),
     /*
      * The service worker is what turns this from "installable" into "usable
      * with no signal". Once installed, the whole shell — HTML, JS, CSS, the

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decodeSketch, encodeSketch } from '@whereareyou/protocol';
 import type { LiveParticipant, Position, Sketch } from '@whereareyou/protocol';
 import { connectLive, type LiveHandle } from './live.js';
-import { Map, type MapPeer } from './Map.jsx';
+import { Map, type MapPeer, type PlacedMarker } from './Map.jsx';
 import { inferSource, timeRemaining } from './formats.js';
 
 /**
@@ -45,6 +45,8 @@ export function SessionMap({
   const [ended, setEnded] = useState<'expired' | 'refused' | 'failed' | null>(null);
   const [mySketch, setMySketch] = useState<Sketch | null>(initialSketch);
   const [myPosition, setMyPosition] = useState<Position | null>(null);
+  /** The point I placed — a claim about the world, never where I am. */
+  const [myMarker, setMyMarker] = useState<Position | null>(null);
   const [, forceTick] = useState(0);
   const handleRef = useRef<LiveHandle | null>(null);
   const selfIdRef = useRef<string | null>(null);
@@ -119,6 +121,32 @@ export function SessionMap({
     return () => navigator.geolocation.clearWatch(watch);
   }, [share]);
 
+  const placeMarker = useCallback((lat: number, lon: number) => {
+    const position: Position = {
+      lat,
+      lon,
+      accuracyM: 10,
+      source: 'manual',
+      takenAt: new Date().toISOString(),
+    };
+    setMyMarker(position);
+    handleRef.current?.sendMarker(position);
+  }, []);
+
+  // The room spreads by its link — same shape as the code screen's share.
+  const shareRoom = useCallback(async () => {
+    const text = `Join my live location session — code ${displayCode}. Open ${window.location.origin}${import.meta.env.BASE_URL}lookup?code=${code}`;
+    if ('share' in navigator) {
+      try {
+        await navigator.share({ title: 'Live location session', text });
+        return;
+      } catch {
+        // Sheet dismissed — fall through to the clipboard.
+      }
+    }
+    await navigator.clipboard.writeText(text);
+  }, [code, displayCode]);
+
   const changeSketch = useCallback((sketch: Sketch | null) => {
     setMySketch(sketch);
     // An empty sketch is announced too — clearing must clear everywhere.
@@ -152,6 +180,16 @@ export function SessionMap({
     return dots;
   }, [roster, selfId, role, share, myPosition, name]);
 
+  const placedMarkers = useMemo(() => {
+    const points: PlacedMarker[] = [];
+    for (const entry of roster) {
+      if (entry.id === selfId || entry.marker === undefined) continue;
+      points.push({ id: entry.id, label: entry.name, position: entry.marker });
+    }
+    if (myMarker !== null) points.push({ id: 'self-marker', label: name ?? 'Me', position: myMarker });
+    return points;
+  }, [roster, selfId, myMarker, name]);
+
   const remoteSketches = useMemo(() => {
     const decoded: Array<{ id: string; sketch: Sketch }> = [];
     for (const entry of roster) {
@@ -176,6 +214,8 @@ export function SessionMap({
         onSketchChange={changeSketch}
         peers={peers}
         remoteSketches={remoteSketches}
+        placedMarkers={placedMarkers}
+        onPlaceMarker={placeMarker}
         fullscreenLocked
         className="map map-fill"
         fullscreenOverlay={
@@ -194,9 +234,14 @@ export function SessionMap({
                       }`}
               </p>
             </div>
-            <button type="button" className="button" onClick={onLeave}>
-              {role === 'owner' ? 'Back to code' : 'Leave'}
-            </button>
+            <div className="live-bar-actions">
+              <button type="button" className="button button-primary" onClick={() => void shareRoom()}>
+                Share
+              </button>
+              <button type="button" className="button" onClick={onLeave}>
+                {role === 'owner' ? 'Back to code' : 'Leave'}
+              </button>
+            </div>
           </div>
         }
       />

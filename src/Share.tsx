@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor } from '@whereareyou/protocol';
+import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
 import type { CreateSessionResponse, Position, SessionMode, Sketch } from '@whereareyou/protocol';
 import { mintSession, revokeSession, updatePosition, upgradeToLive } from './api.js';
 import { useConnectivity } from './connectivity.js';
@@ -91,6 +91,41 @@ interface PastShare {
   at: number;
 }
 
+/**
+ * The one session this device currently has running, so a reload — or a trip
+ * to another app — can come BACK to it as the owner instead of rejoining
+ * their own room as a stranger. Cleared on revoke; ignored once expired.
+ */
+interface ActiveShare {
+  code: string;
+  updateToken: string;
+  expiresAt: string;
+  mode: SessionMode;
+  position: Position;
+}
+
+const ACTIVE_KEY = 'activeShare';
+
+function loadActiveShare(): ActiveShare | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_KEY);
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw) as ActiveShare;
+    return typeof parsed.code === 'string' && typeof parsed.updateToken === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistActiveShare(entry: ActiveShare | null): void {
+  try {
+    if (entry === null) localStorage.removeItem(ACTIVE_KEY);
+    else localStorage.setItem(ACTIVE_KEY, JSON.stringify(entry));
+  } catch {
+    // Convenience only.
+  }
+}
+
 const HISTORY_KEY = 'shareHistory';
 const HISTORY_MAX = 8;
 
@@ -166,6 +201,7 @@ export function Share() {
   /** Where the flow is, coarsely — drives what Back means right now. */
   const phaseGroupRef = useRef<'start' | 'placed' | 'done'>('start');
   const [history, setHistory] = useState<PastShare[]>(loadHistory);
+  const [resumable, setResumable] = useState<ActiveShare | null>(loadActiveShare);
   const [, forceTick] = useState(0);
   const watchRef = useRef<number | null>(null);
   const { online, linkUp, reportReachable, reportUnreachable } = useConnectivity();
@@ -183,8 +219,11 @@ export function Share() {
   // Everything before a code exists is map-first: the map IS the screen and
   // the controls float over it. Once a code exists the code is the product
   // and the page becomes the issued document again.
+  // liveOpen counts: the owner's live map is a map-first screen layered over
+  // the code phase, and this toggle must not strip the body class out from
+  // under SessionMap (parent effects run after child effects).
   const mapFirst =
-    phase.name !== 'shared' && phase.name !== 'offline-shared';
+    (phase.name !== 'shared' && phase.name !== 'offline-shared') || liveOpen;
 
   useEffect(() => {
     document.body.classList.toggle('map-first', mapFirst);
@@ -460,6 +499,15 @@ export function Share() {
 
       reportReachable();
       recordShare(position);
+      const active: ActiveShare = {
+        code: result.data.code,
+        updateToken: result.data.updateToken,
+        expiresAt: result.data.expiresAt,
+        mode,
+        position,
+      };
+      setResumable(active);
+      persistActiveShare(active);
       setPhase({ name: 'shared', position, session: result.data, spokenOfflineCode });
     },
     [mode, thirdParty, note, sketch, ttl, fallToOfflineCode, recordShare, reportReachable, reportUnreachable],
@@ -522,6 +570,10 @@ export function Share() {
     if (phase.name !== 'shared') return;
 
     const result = await revokeSession(phase.session.code, phase.session.updateToken);
+    if (result.ok) {
+      setResumable(null);
+      persistActiveShare(null);
+    }
     if (!result.ok) {
       if (result.status === 0) reportUnreachable();
       // Silently returning to the start screen here would tell the caller their
@@ -657,6 +709,32 @@ export function Share() {
                     )}
                   </div>
                 )}
+
+                {phase.name === 'idle' &&
+                  resumable !== null &&
+                  timeRemaining(resumable.expiresAt) !== 'expired' && (
+                    <button
+                      className="button button-primary resume-chip"
+                      onClick={() => {
+                        setMode(resumable.mode);
+                        setPhase({
+                          name: 'shared',
+                          position: resumable.position,
+                          session: {
+                            code: resumable.code,
+                            display: formatCode(resumable.code),
+                            phonetic: toPhonetic(resumable.code),
+                            expiresAt: resumable.expiresAt,
+                            updateToken: resumable.updateToken,
+                          },
+                          spokenOfflineCode: null,
+                        });
+                      }}
+                    >
+                      Back to your code {formatCode(resumable.code)} —{' '}
+                      {timeRemaining(resumable.expiresAt)} left
+                    </button>
+                  )}
 
                 <button className="big-button" onClick={locate} disabled={phase.name === 'locating'}>
                   {phase.name === 'locating' ? 'Getting your location…' : 'Share my location'}
@@ -815,6 +893,11 @@ export function Share() {
                   return;
                 }
                 setMode('live');
+                if (resumable !== null && resumable.code === session.code) {
+                  const upgraded = { ...resumable, mode: 'live' as const };
+                  setResumable(upgraded);
+                  persistActiveShare(upgraded);
+                }
               }
               setLiveOpen(true);
             })();
