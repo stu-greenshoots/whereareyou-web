@@ -259,9 +259,11 @@
 /* ---- Read-aloud block -------------------------------------------------- */
 
 /* The phonetic rendering is the ACTUAL interface — it is what travels down the
-   phone line. Styled as an instruction to be performed, not as a caption.
-   Each word sits under its character so caller and dispatcher can
-   cross-reference a symbol without re-reading the whole string. */
+   phone line. Each word sits under its character so caller and dispatcher can
+   cross-reference a symbol without re-reading the whole string. Four fixed
+   columns, so an 8-character session code always reads as two even rows of
+   four — the grouping the caller speaks — down to 320px-wide phones. (The
+   10-character offline code makes 4+4+2 on the same grid.) */
 .read-aloud {
   border-top: 1px solid var(--rule-soft);
   margin-top: 24px;
@@ -270,17 +272,16 @@
 }
 
 .phonetic-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 6px;
 }
 
 .phonetic-pair {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 44px;
+  min-width: 0;
 }
 
 .phonetic-char {
@@ -291,10 +292,27 @@
 }
 
 .phonetic-word {
-  font-size: 17px;
+  /* Sized from the column the word must fit: (100vw − 98px) is the grid's
+     content width (main padding 40 + doc borders 4 + body padding 36 + three
+     6px gaps), a quarter of that is one column, and the widest word —
+     "November" — measures ~4.8px per px of font size. Never below the
+     system's 14px reading floor. Measured, not asserted. */
+  font-size: clamp(14px, calc((100vw - 98px) / 20), 17px);
   font-weight: 600;
   color: var(--accent);
   line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* The narrowest phones: give four-abreast its room by trimming the
+   horizontal chrome rather than the words — the 14px floor holds, and at
+   320px even "November" only kisses its 4px gutters. */
+@media (max-width: 374px) {
+  .theme-public .main { padding-left: 12px; padding-right: 12px; }
+  .code-doc-body { padding-left: 10px; padding-right: 10px; }
+  .phonetic-grid { column-gap: 4px; }
+  /* Same formula, re-derived for the trimmed chrome (24 + 4 + 20 + 12). */
+  .phonetic-word { font-size: clamp(14px, calc((100vw - 60px) / 20), 17px); }
 }
 
 .code-expiry {
@@ -1728,9 +1746,64 @@ body.map-first .header { display: none; }
   color: var(--text-dim);
 }
 
-/* ---- Extend (code screen) ---------------------------------------------- */
+/* ---- Code screen: map preview as the door to the live map --------------
+   The whole preview is one tap; the labelled corner pill is the visible
+   affordance. It sits above the map's stacking context (the map root is
+   z-index 0), so taps land here and never half-drag the tiles. */
+.map-preview { position: relative; }
+.map-preview-open {
+  position: absolute;
+  inset: 0;
+  z-index: 701;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  cursor: pointer;
+}
+.map-preview-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 650;
+  box-shadow: 0 1px 6px #0003;
+}
+.map-preview-cta svg { width: 18px; height: 18px; }
+.map-preview-open:hover .map-preview-cta { background: var(--surface-2); }
 
-.extend-block { gap: 8px; }
+/* ---- Code screen: the utility cluster -----------------------------------
+   Countdown, extend and notify share one quiet ruled panel, so the code and
+   the map stay the only loud things on the screen. */
+.code-utility {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.utility-extend { display: flex; align-items: center; gap: 10px; }
+.utility-remaining {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.utility-extend .seg-row { flex: 1; }
+.code-utility .notify-row .link-button { padding: 4px 0; text-align: left; }
 .extend-note {
   margin: 0;
   font-size: 13px;

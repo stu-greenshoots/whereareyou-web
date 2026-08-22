@@ -537,6 +537,10 @@ export function Share() {
     const saved = openMapRequest;
     consumeOpenMapRequest();
     stopAcquire();
+    // The drawer is reachable from the live map now — leaving for a saved
+    // map must also put the live view down, or the stale flag would fling
+    // the next minted code straight onto the map.
+    setLiveOpen(false);
     setThirdParty(saved.thirdParty);
     setShareName(saved.name);
     setNote(saved.note);
@@ -847,25 +851,33 @@ export function Share() {
   if (liveOpen && phase.name === 'shared') {
     const { session } = phase;
     return (
-      <SessionMap
-        code={session.code}
-        displayCode={formatCode(session.code)}
-        role="owner"
-        updateToken={session.updateToken}
-        share
-        {...(account.name !== ''
-          ? { name: account.name }
-          : shareName.trim() !== ''
-            ? { name: shareName.trim() }
-            : {})}
-        {...(account.avatar !== null ? { avatar: account.avatar } : {})}
-        initialPosition={phase.position}
-        initialSketch={sketch}
-        initialMarkers={markers}
-        onSketchShared={adoptLiveSketch}
-        onMarkersShared={adoptLiveMarkers}
-        onLeave={() => setLiveOpen(false)}
-      />
+      <div className="share-stage">
+        <SessionMap
+          code={session.code}
+          displayCode={formatCode(session.code)}
+          role="owner"
+          updateToken={session.updateToken}
+          share
+          {...(account.name !== ''
+            ? { name: account.name }
+            : shareName.trim() !== ''
+              ? { name: shareName.trim() }
+              : {})}
+          {...(account.avatar !== null ? { avatar: account.avatar } : {})}
+          initialPosition={phase.position}
+          initialSketch={sketch}
+          initialMarkers={markers}
+          onSketchShared={adoptLiveSketch}
+          onMarkersShared={adoptLiveMarkers}
+          onLeave={() => setLiveOpen(false)}
+        />
+        {/* The same floating account control the other map-first screens get.
+            Top-right is free on the live map — zoom keeps to the top-left,
+            the live bar and drawing tools to the bottom. */}
+        <div className="profile-float">
+          <ProfileMenu onOpenSavedMap={requestOpenMap} />
+        </div>
+      </div>
     );
   }
 
@@ -1146,6 +1158,41 @@ export function Share() {
   const { session } = phase;
   const remaining = timeRemaining(session.expiresAt);
   const expired = remaining === 'expired';
+  /** The map preview doubles as the door to the live map — only while the
+      code is alive and there is a connection to hold a room open. */
+  const canOpenLive = !expired && online;
+
+  /**
+   * One tap on the preview opens the live map, upgrading a static session on
+   * the way (one-way — the room needs a live session behind it). Same move
+   * the old standalone button made; the label on the preview says which of
+   * the two the tap will do.
+   */
+  const openLiveMap = () => {
+    void (async () => {
+      setLiveError(null);
+      if (mode !== 'live') {
+        const result = await upgradeToLive(session.code, session.updateToken);
+        if (!result.ok) {
+          setLiveError(result.message);
+          return;
+        }
+        setMode('live');
+        if (resumable !== null && resumable.code === session.code) {
+          const upgraded = { ...resumable, mode: 'live' as const };
+          setResumable(upgraded);
+          persistActiveShare(upgraded);
+        }
+        // Same promotion as a live mint: the pin is about to start
+        // following the caller, so a hand-placed spot becomes
+        // markers[0] before the first fix can replace it.
+        if (markers.length === 0 && phase.position.source === 'manual') {
+          adoptLiveMarkers([{ id: newLiveId(), position: phase.position, icon: 'spot' }]);
+        }
+      }
+      setLiveOpen(true);
+    })();
+  };
 
   return (
     <div className="stack">
@@ -1159,7 +1206,6 @@ export function Share() {
           <p className="code">{formatCode(session.code)}</p>
 
           <div className="read-aloud">
-            <span className="label">Read aloud to the operator</span>
             <PhoneticGrid code={session.code} />
           </div>
         </div>
@@ -1175,128 +1221,6 @@ export function Share() {
             That one still works, and it still never expires — stopping the code above does not
             take it back. Tell the operator to use the new code if you can.
           </span>
-        </div>
-      )}
-
-      <div className="row">
-        <button className="button button-primary" onClick={nativeShare}>
-          Share code
-        </button>
-        <button
-          className="button button-danger"
-          onClick={expired ? startAgain : () => void revoke()}
-        >
-          {expired ? 'Start again' : 'Stop sharing'}
-        </button>
-      </div>
-
-      {/* Offline, the online-only controls below (extend, notifications,
-          the live map) are withheld rather than offered-and-failing; this
-          one quiet line stands in for all of them. */}
-      {!expired && !online && (
-        <p className="offline-gate">
-          Extending the code, notifications and the live map need a connection. They come back
-          when you do.
-        </p>
-      )}
-
-      {/* Extending is the owner's call and needs the resolver; the server
-          clamps cumulative lifetime at 24h and the countdown above renders
-          whatever expiry it actually granted. */}
-      {!expired && online && (
-        <div className="seg-block extend-block">
-          <span className="seg-label">Keep the code running longer</span>
-          <div className="seg-row" role="group" aria-label="Extend the code">
-            {EXTEND_CHOICES.map(([minutes, label]) => (
-              <button
-                key={minutes}
-                type="button"
-                className="seg"
-                disabled={extendBusy}
-                onClick={() => void extend(minutes)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {extendNote !== null && <p className="extend-note">{extendNote}</p>}
-        </div>
-      )}
-
-      {!expired && online && (
-        <button
-          className="button button-primary"
-          onClick={() => {
-            void (async () => {
-              setLiveError(null);
-              if (mode !== 'live') {
-                // One-way upgrade — the room needs a live session behind it.
-                const result = await upgradeToLive(session.code, session.updateToken);
-                if (!result.ok) {
-                  setLiveError(result.message);
-                  return;
-                }
-                setMode('live');
-                if (resumable !== null && resumable.code === session.code) {
-                  const upgraded = { ...resumable, mode: 'live' as const };
-                  setResumable(upgraded);
-                  persistActiveShare(upgraded);
-                }
-                // Same promotion as a live mint: the pin is about to start
-                // following the caller, so a hand-placed spot becomes
-                // markers[0] before the first fix can replace it.
-                if (markers.length === 0 && phase.position.source === 'manual') {
-                  adoptLiveMarkers([{ id: newLiveId(), position: phase.position, icon: 'spot' }]);
-                }
-              }
-              setLiveOpen(true);
-            })();
-          }}
-        >
-          {mode === 'live' ? 'Open the live map' : 'Make this a live session'}
-        </button>
-      )}
-
-      {/* Quiet, tap-only: no permission prompt until asked, and nothing at
-          all on platforms that cannot deliver a push. */}
-      {!expired && online && <NotifyControl code={session.code} variant="document" />}
-
-      <SaveMapButton
-        suggestedName={shareName.trim() !== '' ? shareName.trim() : note.trim()}
-        data={() => ({
-          lat: position.lat,
-          lon: position.lon,
-          accuracyM: position.accuracyM,
-          note: note.trim(),
-          sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
-          marker: markers[0]?.position ?? null,
-          ...(markers[0] !== undefined ? { markerIcon: markers[0].icon } : {}),
-          thirdParty,
-          source: 'share',
-          code: session.code,
-        })}
-      />
-
-      {liveError !== null && (
-        <div className="notice notice-warn">
-          <p>Could not make this live: {liveError}</p>
-        </div>
-      )}
-
-      {stopFailure !== null && (
-        <div className="notice notice-warn">
-          <strong>Could not stop the sharing.</strong>
-          <span>
-            {stopFailure} The code above is still live and will stop on its own in {remaining}.
-          </span>
-          <div className="notice-actions">
-            <button className="button" onClick={() => void revoke()}>
-              Try again
-            </button>
-            <button className="link-button" onClick={startAgain}>
-              Leave it running and start over
-            </button>
-          </div>
         </div>
       )}
 
@@ -1321,35 +1245,171 @@ export function Share() {
         </div>
       )}
 
-      <Map
-        lat={position.lat}
-        lon={position.lon}
-        accuracyM={position.accuracyM}
-        thirdParty={thirdParty}
-        pinAvatar={thirdParty ? null : account.avatar}
-        offline={!online}
-        sketch={sketch}
-        fitContent
-        allowFullscreen
-        {...(markers.length > 0
-          ? {
-              placedMarkers: markers.map((m) => ({
-                id: m.id,
-                label: 'Spot',
-                name: m.name,
-                position: m.position,
-                icon: m.icon,
-              })),
+      {/* The preview IS the door to the live map: the whole thing is one tap,
+          with a labelled corner affordance so it never reads as mystery meat.
+          Offline or expired it falls back to the plain expandable preview —
+          a door to a room that cannot open is worse than no door. */}
+      {canOpenLive ? (
+        <div className="map-preview">
+          <Map
+            lat={position.lat}
+            lon={position.lon}
+            accuracyM={position.accuracyM}
+            thirdParty={thirdParty}
+            pinAvatar={thirdParty ? null : account.avatar}
+            offline={!online}
+            sketch={sketch}
+            fitContent
+            {...(markers.length > 0
+              ? {
+                  placedMarkers: markers.map((m) => ({
+                    id: m.id,
+                    label: 'Spot',
+                    name: m.name,
+                    position: m.position,
+                    icon: m.icon,
+                  })),
+                }
+              : {})}
+          />
+          <button
+            type="button"
+            className="map-preview-open"
+            onClick={openLiveMap}
+            aria-label={
+              mode === 'live'
+                ? 'Open the live map'
+                : 'Make this a live session and open the live map'
             }
-          : {})}
-        fullscreenOverlay={
-          <div className="map-sheet map-sheet-code">
-            <p className="map-code-line">{formatCode(session.code)}</p>
-            <button className="button button-primary" onClick={nativeShare}>
-              Share code
+          >
+            <span className="map-preview-cta">
+              <ExpandIcon />
+              {mode === 'live' ? 'Open live map' : 'Make this live'}
+            </span>
+          </button>
+        </div>
+      ) : (
+        <Map
+          lat={position.lat}
+          lon={position.lon}
+          accuracyM={position.accuracyM}
+          thirdParty={thirdParty}
+          pinAvatar={thirdParty ? null : account.avatar}
+          offline={!online}
+          sketch={sketch}
+          fitContent
+          allowFullscreen
+          {...(markers.length > 0
+            ? {
+                placedMarkers: markers.map((m) => ({
+                  id: m.id,
+                  label: 'Spot',
+                  name: m.name,
+                  position: m.position,
+                  icon: m.icon,
+                })),
+              }
+            : {})}
+          fullscreenOverlay={
+            <div className="map-sheet map-sheet-code">
+              <p className="map-code-line">{formatCode(session.code)}</p>
+              <button className="button button-primary" onClick={nativeShare}>
+                Share code
+              </button>
+            </div>
+          }
+        />
+      )}
+
+      {liveError !== null && (
+        <div className="notice notice-warn">
+          <p>Could not make this live: {liveError}</p>
+        </div>
+      )}
+
+      {/* One quiet cluster for the code's housekeeping — countdown, extend,
+          notify — so nothing in it competes with the code or the map.
+          Extending is the owner's call and needs the resolver; the server
+          clamps cumulative lifetime at 24h and the countdowns render
+          whatever expiry it actually granted. */}
+      {!expired && online && (
+        <div className="code-utility">
+          <div className="utility-extend" role="group" aria-label="Keep the code running longer">
+            <span className="utility-remaining">{remaining} left</span>
+            <div className="seg-row">
+              {EXTEND_CHOICES.map(([minutes, label]) => (
+                <button
+                  key={minutes}
+                  type="button"
+                  className="seg"
+                  disabled={extendBusy}
+                  onClick={() => void extend(minutes)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {extendNote !== null && <p className="extend-note">{extendNote}</p>}
+          {/* Quiet, tap-only: no permission prompt until asked, and nothing
+              at all on platforms that cannot deliver a push. */}
+          <NotifyControl code={session.code} variant="document" />
+        </div>
+      )}
+
+      {/* Offline, the online-only controls (extend, notifications, the live
+          map) are withheld rather than offered-and-failing; this one quiet
+          line stands in for all of them. */}
+      {!expired && !online && (
+        <p className="offline-gate">
+          Extending the code, notifications and the live map need a connection. They come back
+          when you do.
+        </p>
+      )}
+
+      <div className="row">
+        <button className="button button-primary" onClick={nativeShare}>
+          Share code
+        </button>
+        <button
+          className="button button-danger"
+          onClick={expired ? startAgain : () => void revoke()}
+        >
+          {expired ? 'Start again' : 'Stop sharing'}
+        </button>
+      </div>
+
+      {stopFailure !== null && (
+        <div className="notice notice-warn">
+          <strong>Could not stop the sharing.</strong>
+          <span>
+            {stopFailure} The code above is still live and will stop on its own in {remaining}.
+          </span>
+          <div className="notice-actions">
+            <button className="button" onClick={() => void revoke()}>
+              Try again
+            </button>
+            <button className="link-button" onClick={startAgain}>
+              Leave it running and start over
             </button>
           </div>
-        }
+        </div>
+      )}
+
+      <SaveMapButton
+        suggestedName={shareName.trim() !== '' ? shareName.trim() : note.trim()}
+        data={() => ({
+          lat: position.lat,
+          lon: position.lon,
+          accuracyM: position.accuracyM,
+          note: note.trim(),
+          sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
+          marker: markers[0]?.position ?? null,
+          ...(markers[0] !== undefined ? { markerIcon: markers[0].icon } : {}),
+          thirdParty,
+          source: 'share',
+          code: session.code,
+        })}
       />
 
       <CoordinatePanel formats={formats} position={position} online={online} />
@@ -1700,6 +1760,22 @@ function GearIcon() {
   );
 }
 
+/** The same four-corner expand glyph the map's own fullscreen control uses. */
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function SignalOffIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1764,7 +1840,6 @@ function OfflineShared({
           <p className="code code-offline">{formatOfflineCode(code)}</p>
 
           <div className="read-aloud">
-            <span className="label">Read aloud to the operator</span>
             <PhoneticGrid code={code} />
           </div>
         </div>
