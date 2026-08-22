@@ -7,6 +7,7 @@ import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { useConnectivity } from './connectivity.js';
 import { Map, MarkerIconPicker } from './Map.jsx';
+import { OpenInMaps } from './OpenInMaps.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap } from './SessionMap.jsx';
 import { connectLive } from './live.js';
@@ -545,6 +546,16 @@ export function Share() {
     async (position: Position, spokenOfflineCode: string | null) => {
       setPhase({ name: 'minting', position, spokenOfflineCode });
 
+      // A live share moves the pin to wherever the caller really is. A pin
+      // that was placed BY HAND is a claim about somewhere else, so it must
+      // survive as its own marked spot — without this, the first live fix
+      // replaces the one place the caller chose to share.
+      let liveMarker = marker;
+      if (mode === 'live' && marker === null && position.source === 'manual') {
+        liveMarker = position;
+        setMarker(position);
+      }
+
       // The drawing rides the mint, but must never cost it: if encoding
       // fails for any reason the session is minted without the sketch.
       let sketchPayload: string | undefined;
@@ -563,7 +574,7 @@ export function Share() {
         ttlSeconds: ttl,
         ...(note.trim() !== '' ? { note: note.trim() } : {}),
         ...(sketchPayload !== undefined ? { sketch: sketchPayload } : {}),
-        ...(marker !== null ? { marker, markerIcon } : {}),
+        ...(liveMarker !== null ? { marker: liveMarker, markerIcon } : {}),
       });
 
       if (!result.ok) {
@@ -592,7 +603,7 @@ export function Share() {
         mode,
         position,
         sketch: sketchPayload ?? null,
-        marker,
+        marker: liveMarker,
         markerIcon,
       };
       setResumable(active);
@@ -1096,6 +1107,12 @@ export function Share() {
                   setResumable(upgraded);
                   persistActiveShare(upgraded);
                 }
+                // Same promotion as a live mint: the pin is about to start
+                // following the caller, so a hand-placed spot becomes the
+                // marked spot before the first fix can replace it.
+                if (marker === null && phase.position.source === 'manual') {
+                  adoptLiveMarker(phase.position, markerIcon);
+                }
               }
               setLiveOpen(true);
             })();
@@ -1173,7 +1190,7 @@ export function Share() {
         pinAvatar={thirdParty ? null : account.avatar}
         offline={!online}
         sketch={sketch}
-        fitSketch
+        fitContent
         allowFullscreen
         {...(marker !== null
           ? { placedMarkers: [{ id: 'my-marker', label: 'Spot', position: marker, icon: markerIcon }] }
@@ -1277,9 +1294,12 @@ function LocatedSheet({
       {marker !== null && (
         <p className="marker-row">
           A spot is marked. Tap the map to move it; tap the diamond to say what it is.
-          <button className="link-button" onClick={onRemoveMarker}>
-            Remove it
-          </button>
+          <span className="marker-row-actions">
+            <OpenInMaps lat={marker.lat} lon={marker.lon} label="Shared spot" />
+            <button className="link-button" onClick={onRemoveMarker}>
+              Remove it
+            </button>
+          </span>
         </p>
       )}
 
@@ -1683,7 +1703,7 @@ function OfflineShared({
         pinAvatar={pinAvatar ?? null}
         offline={!online}
         sketch={sketch}
-        fitSketch
+        fitContent
         allowFullscreen
         fullscreenOverlay={
           <div className="map-sheet map-sheet-code">

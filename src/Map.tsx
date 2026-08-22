@@ -91,6 +91,19 @@ export interface MapPeer {
 const PEER_COLOUR = '#475569';
 
 /**
+ * Tile sources — CARTO's free basemaps (OSM data, calmer cartography than the
+ * OSM standard style). `voyager` for the light public surfaces, `dark` for
+ * the dispatcher console. `{r}` makes Leaflet fetch @2x tiles on retina
+ * screens; CARTO requires the joint OSM+CARTO attribution below.
+ */
+const TILE_SOURCES = {
+  voyager: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+} as const;
+
+export type TileVariant = keyof typeof TILE_SOURCES;
+
+/**
  * A PLACED point — a claim about the world ("the entrance is here"), never a
  * live fix. Diamond, not dot, so the two can't be confused at a glance.
  */
@@ -201,6 +214,12 @@ export interface MapProps {
   trail?: Array<[number, number]>;
   /** Tiles come from the network. When there is none, say so. */
   offline?: boolean;
+  /**
+   * Which basemap to draw: `voyager` (light — the public surfaces) or `dark`
+   * (the console). Read once at creation — a mounted map never changes
+   * surface.
+   */
+  tiles?: TileVariant;
   /** When set, shows a "locate me" control that re-fetches the live position. */
   onLocate?: () => void;
   /** Whether a locate request is in flight — the control shows a busy state. */
@@ -216,11 +235,12 @@ export interface MapProps {
   /** Where a brand-new sketch is anchored. Defaults to the pin position. */
   sketchAnchor?: { lat: number; lon: number };
   /**
-   * Fit the view to the sketch (plus the pin) once, when it first appears.
-   * For read-only maps ONLY — refitting under someone's finger mid-stroke on
-   * an editable map would be horrible, so editable maps never set this.
+   * Fit the view once to everything the caller put on the map — sketch and
+   * placed markers, plus the pin — when it first appears. For read-only maps
+   * ONLY — refitting under someone's finger mid-stroke on an editable map
+   * would be horrible, so editable maps never set this.
    */
-  fitSketch?: boolean;
+  fitContent?: boolean;
   /** Tiles only — no pin, no accuracy circle. The pre-location start map. */
   hidePin?: boolean;
   /** Zoom for the initial view (default 17). The start map opens wide. */
@@ -293,12 +313,13 @@ export function Map({
   onMove,
   trail,
   offline = false,
+  tiles = 'voyager',
   onLocate,
   locating = false,
   sketch = null,
   onSketchChange,
   sketchAnchor,
-  fitSketch = false,
+  fitContent = false,
   hidePin = false,
   initialZoom = 17,
   fullscreenLocked = false,
@@ -331,7 +352,7 @@ export function Map({
   const circleRef = useRef<L.Circle | null>(null);
   const trailRef = useRef<L.Polyline | null>(null);
   const sketchHandleRef = useRef<SketchHandle | null>(null);
-  const fittedSketchRef = useRef(false);
+  const fittedContentRef = useRef(false);
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
 
@@ -372,8 +393,9 @@ export function Map({
     if (containerRef.current === null) return;
 
     const instance = L.map(containerRef.current, { zoomControl: true }).setView([lat, lon], initialZoom);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+    L.tileLayer(TILE_SOURCES[tiles], {
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      subdomains: 'abcd',
       maxZoom: 19,
     }).addTo(instance);
 
@@ -403,7 +425,7 @@ export function Map({
       peerLayersRef.current = {};
       remoteSketchesRef.current = {};
       placedLayersRef.current = {};
-      fittedSketchRef.current = false;
+      fittedContentRef.current = false;
     };
     // Created once per mount; position changes are handled by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -478,18 +500,26 @@ export function Map({
     }
   }, [map, sketch]);
 
-  // Fit the view to the sketch once, when it first arrives on a read-only
-  // map. Once only, and never on editable maps — the existing auto-pan effect
+  // Fit the view to the caller's content once, when it first arrives on a
+  // read-only map — a marked spot centred off-screen might as well not exist.
+  // Once only, and never on editable maps — the existing auto-pan effect
   // below keeps working unchanged afterwards, and after a fit that includes
   // the pin the two cannot fight.
   useEffect(() => {
-    if (map === null || !fitSketch || sketch === null || sketch.shapes.length === 0) return;
-    if (fittedSketchRef.current) return;
-    fittedSketchRef.current = true;
-    const bounds = sketchBounds(sketch);
-    if (bounds === null) return;
-    map.fitBounds(L.latLngBounds(bounds).extend([lat, lon]), { padding: [32, 32], maxZoom: 18 });
-  }, [map, fitSketch, sketch, lat, lon]);
+    if (map === null || !fitContent) return;
+    const hasSketch = sketch !== null && sketch.shapes.length > 0;
+    const placed = placedMarkers ?? [];
+    if (!hasSketch && placed.length === 0) return;
+    if (fittedContentRef.current) return;
+    fittedContentRef.current = true;
+    const bounds = L.latLngBounds([[lat, lon]]);
+    if (hasSketch) {
+      const sketched = sketchBounds(sketch);
+      if (sketched !== null) bounds.extend(L.latLngBounds(sketched));
+    }
+    for (const marker of placed) bounds.extend([marker.position.lat, marker.position.lon]);
+    map.fitBounds(bounds, { padding: [32, 32], maxZoom: 18 });
+  }, [map, fitContent, sketch, placedMarkers, lat, lon]);
 
   // Sync the peer dots — add, move, and remove to match the roster.
   useEffect(() => {

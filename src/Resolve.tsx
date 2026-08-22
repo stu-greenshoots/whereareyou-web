@@ -12,6 +12,7 @@ import { SaveMapButton } from './SaveMap.jsx';
 import { SessionMap } from './SessionMap.jsx';
 import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
+import { OpenInMaps } from './OpenInMaps.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, timeRemaining } from './formats.js';
 
@@ -331,6 +332,7 @@ function OfflineView({ result, offline }: { result: OfflineResult; offline: bool
         lon={position.lon}
         accuracyM={position.cellSizeM}
         offline={offline}
+        tiles="dark"
         allowFullscreen
         showViewerLocation
         viewerAvatar={account.avatar}
@@ -362,6 +364,7 @@ function OfflineView({ result, offline }: { result: OfflineResult; offline: bool
           value={`${formats.latLon} (offline code ${formatOfflineCode(result.code)}, ±${cellSize}m)`}
         />
         <CopyRow label="Google Maps" value="Open in Google Maps" href={formats.googleMapsUrl} />
+        <OpenInMaps lat={position.lat} lon={position.lon} label={formatOfflineCode(result.code)} />
       </section>
     </>
   );
@@ -406,8 +409,9 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
         offline={offline}
+        tiles="dark"
         sketch={sketch}
-        fitSketch
+        fitContent
         allowFullscreen
         showViewerLocation
         viewerAvatar={account.avatar}
@@ -479,6 +483,7 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         )}
         <CopyRow label="Copy for CAD" value={cadLine} />
         <CopyRow label="Google Maps" value="Open in Google Maps" href={formats.googleMapsUrl} />
+        <OpenInMaps lat={position.lat} lon={position.lon} label={formatCode(session.code)} />
       </section>
     </>
   );

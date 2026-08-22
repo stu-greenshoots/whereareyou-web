@@ -1116,6 +1116,12 @@ body.map-first .header { display: none; }
   color: var(--text-dim);
 }
 
+.marker-row-actions { display: flex; align-items: center; flex-shrink: 0; }
+
+/* A quiet way OUT to the phone's own maps app — an annotation on the
+   location, never a rival to the primary actions. */
+.open-in-maps { display: inline-block; align-self: flex-start; white-space: nowrap; }
+
 /* The glyph inside a placed diamond, and the icon chooser. */
 .placed-marker-glyph {
   display: flex;

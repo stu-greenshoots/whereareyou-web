@@ -52,12 +52,13 @@ export default defineConfig({
         runtimeCaching: [
           {
             // Map tiles are the one thing that genuinely needs the network.
-            // Cache what has actually been viewed (never pre-fetch — OSM policy
-            // forbids it), so a map seen before losing signal keeps its tiles.
-            urlPattern: /^https:\/\/tile\.openstreetmap\.org\/.*/,
+            // Cache what has actually been viewed (never pre-fetch — the tile
+            // policies forbid it), so a map seen before losing signal keeps
+            // its tiles. Must match TILE_SOURCES in src/Map.tsx.
+            urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*/,
             handler: 'CacheFirst',
             options: {
-              cacheName: 'osm-tiles',
+              cacheName: 'carto-tiles',
               expiration: { maxEntries: 250, maxAgeSeconds: 7 * 24 * 60 * 60 },
               cacheableResponse: { statuses: [0, 200] },
             },
