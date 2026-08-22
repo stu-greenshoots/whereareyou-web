@@ -1033,5 +1033,14 @@ body.map-first .header { display: none; }
   border: 1px solid var(--rule-soft);
   border-radius: 10px;
   background: var(--surface);
+  /* The panel is the part that scrolls — the icon bar and the mint button
+     below it must never leave the screen. */
+  min-height: 0;
+  flex-shrink: 1;
+  overflow-y: auto;
 }
+.map-sheet > .sheet-bar,
+.map-sheet > .big-button,
+.map-sheet > .notice,
+.map-sheet > .accuracy-readout { flex-shrink: 0; }
 .sheet-panel .panel-hint { margin: -8px 0 0; }

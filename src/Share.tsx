@@ -80,6 +80,9 @@ interface PastShare {
   lat: number;
   lon: number;
   accuracyM: number;
+  /** Local-only label for the history list. Never sent anywhere — the NOTE
+      is what the dispatcher sees; this is for the caller's own phone. */
+  name: string;
   note: string;
   /** Encoded sketch payload, restored onto the map when reused. */
   sketch: string | null;
@@ -111,11 +114,11 @@ function persistHistory(entries: PastShare[]): void {
   }
 }
 
-/** Roughly the same spot: replace rather than pile up near-duplicates. */
+/** Roughly the same spot under the same name: replace, don't pile up. */
 function samePlace(a: PastShare, b: PastShare): boolean {
   const east = (a.lon - b.lon) * 111_320 * Math.cos((a.lat * Math.PI) / 180);
   const north = (a.lat - b.lat) * 111_320;
-  return Math.hypot(east, north) < 50 && a.note === b.note;
+  return Math.hypot(east, north) < 50 && a.name === b.name;
 }
 
 function geolocationErrorMessage(error: GeolocationPositionError): {
@@ -150,6 +153,14 @@ export function Share() {
   const [sketch, setSketch] = useState<Sketch | null>(null);
   /** Requested lifetime of the code. The server clamps it regardless. */
   const [ttl, setTtl] = useState(1800);
+  /** Local-only label for the history list — see PastShare.name. */
+  const [shareName, setShareName] = useState('');
+  /** Which sheet panel is open. Hoisted here so browser Back can close it. */
+  const [sheetPanel, setSheetPanel] = useState<'none' | 'options' | 'fallback'>('none');
+  const sheetPanelRef = useRef(sheetPanel);
+  sheetPanelRef.current = sheetPanel;
+  /** Where the flow is, coarsely — drives what Back means right now. */
+  const phaseGroupRef = useRef<'start' | 'placed' | 'done'>('start');
   const [history, setHistory] = useState<PastShare[]>(loadHistory);
   const [, forceTick] = useState(0);
   const watchRef = useRef<number | null>(null);
@@ -176,6 +187,63 @@ export function Share() {
     return () => document.body.classList.remove('map-first');
   }, [mapFirst]);
 
+  /**
+   * Open/close a sheet panel THROUGH the history stack, so the browser Back
+   * button means what a phone user expects: opening a panel pushes an entry,
+   * Back (or tapping the icon again) pops it and the pop closes the panel.
+   */
+  const openSheetPanel = useCallback((which: 'options' | 'fallback', force = false) => {
+    setSheetPanel((current) => {
+      if (current === which) {
+        if (!force) window.history.back(); // the popstate handler closes it
+        return current;
+      }
+      if (current === 'none') window.history.pushState({ shareUi: 'panel' }, '');
+      return which;
+    });
+  }, []);
+
+  // No connection: the fallback formats ARE the product — force them open.
+  useEffect(() => {
+    if (!online && (phase.name === 'located' || phase.name === 'minting')) {
+      openSheetPanel('fallback', true);
+    }
+  }, [online, phase.name, openSheetPanel]);
+
+  // Reaching the located screen from the start screen is also a history
+  // entry, so Back from the map returns to the start screen rather than
+  // leaving the app.
+  useEffect(() => {
+    const group =
+      phase.name === 'located' || phase.name === 'minting'
+        ? 'placed'
+        : phase.name === 'shared' || phase.name === 'offline-shared'
+          ? 'done'
+          : 'start';
+    if (group === 'placed' && phaseGroupRef.current === 'start') {
+      window.history.pushState({ shareUi: 'located' }, '');
+    }
+    phaseGroupRef.current = group;
+  }, [phase.name]);
+
+  useEffect(() => {
+    const onPop = () => {
+      // Closest thing open closes first; otherwise a pop on the located
+      // screen steps back to the start. Anywhere else, Back is just Back.
+      if (sheetPanelRef.current !== 'none') {
+        setSheetPanel('none');
+        return;
+      }
+      if (phaseGroupRef.current === 'placed') {
+        stopAcquire();
+        setPhase({ name: 'idle' });
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Drive the expiry countdown.
   useEffect(() => {
     if (phase.name !== 'shared') return;
@@ -197,6 +265,7 @@ export function Share() {
         lat: position.lat,
         lon: position.lon,
         accuracyM: position.accuracyM,
+        name: shareName.trim(),
         note: note.trim(),
         sketch: sketch !== null && sketch.shapes.length > 0 ? encodeSketch(sketch) : null,
         thirdParty,
@@ -208,7 +277,7 @@ export function Share() {
         return next;
       });
     },
-    [note, sketch, thirdParty],
+    [note, sketch, thirdParty, shareName],
   );
 
   const clearHistory = useCallback(() => {
@@ -303,6 +372,7 @@ export function Share() {
     (entry: PastShare) => {
       stopAcquire();
       setThirdParty(entry.thirdParty);
+      setShareName(entry.name ?? '');
       setNote(entry.note);
       setSketch(entry.sketch !== null ? decodeSketch(entry.sketch) : null);
       setPhase({
@@ -456,13 +526,15 @@ export function Share() {
     let text: string;
     if (phase.name === 'shared') {
       const { display, phonetic } = phase.session;
-      text = `My location code is ${display} — spoken: ${phonetic}. Look it up at ${location.origin}${import.meta.env.BASE_URL}lookup`;
+      // The link carries the code, so for anyone who can tap it the lookup
+      // is one click — the spoken form stays in the text for everyone else.
+      text = `My location code is ${display} — spoken: ${phonetic}. See it at ${location.origin}${import.meta.env.BASE_URL}lookup?code=${phase.session.code}`;
     } else if (phase.name === 'offline-shared') {
       // Spelled out as an offline code, because it behaves differently from a
       // session code at the other end and the recipient needs to know that.
       text = `My offline location code is ${formatOfflineCode(phase.code)} — spoken: ${[...phase.code]
         .map((char) => phoneticFor(char))
-        .join(' ')}. It does not expire. Look it up at ${location.origin}${import.meta.env.BASE_URL}lookup`;
+        .join(' ')}. It does not expire. See it at ${location.origin}${import.meta.env.BASE_URL}lookup?code=${phase.code}`;
     } else {
       return;
     }
@@ -537,14 +609,14 @@ export function Share() {
                 acquiring={acquiring}
                 online={online}
                 sketch={sketch}
-                thirdParty={thirdParty}
-                setThirdParty={setThirdParty}
-                mode={mode}
-                setMode={setMode}
                 note={note}
                 setNote={setNote}
+                name={shareName}
+                setName={setShareName}
                 ttl={ttl}
                 setTtl={setTtl}
+                panel={sheetPanel}
+                onTogglePanel={openSheetPanel}
                 onRelocate={relocate}
                 onShare={share}
               />
@@ -588,7 +660,11 @@ export function Share() {
                       {history.map((entry) => (
                         <button key={entry.at} className="history-row" onClick={() => reuseShare(entry)}>
                           <strong>
-                            {entry.note !== '' ? entry.note : `${entry.lat.toFixed(4)}, ${entry.lon.toFixed(4)}`}
+                            {(entry.name ?? '') !== ''
+                              ? entry.name
+                              : entry.note !== ''
+                                ? entry.note
+                                : `${entry.lat.toFixed(4)}, ${entry.lon.toFixed(4)}`}
                           </strong>
                           <span>
                             {new Date(entry.at).toLocaleString([], {
@@ -758,14 +834,14 @@ function LocatedSheet({
   acquiring,
   online,
   sketch,
-  thirdParty,
-  setThirdParty,
-  mode,
-  setMode,
   note,
   setNote,
+  name,
+  setName,
   ttl,
   setTtl,
+  panel,
+  onTogglePanel,
   onRelocate,
   onShare,
 }: {
@@ -774,30 +850,19 @@ function LocatedSheet({
   acquiring: boolean;
   online: boolean;
   sketch: Sketch | null;
-  thirdParty: boolean;
-  setThirdParty: (value: boolean) => void;
-  mode: SessionMode;
-  setMode: (value: SessionMode) => void;
   note: string;
   setNote: (value: string) => void;
+  name: string;
+  setName: (value: string) => void;
   ttl: number;
   setTtl: (value: number) => void;
+  panel: 'none' | 'options' | 'fallback';
+  onTogglePanel: (which: 'options' | 'fallback') => void;
   onRelocate: () => void;
   onShare: () => void;
 }) {
   const formats = allFormats(position.lat, position.lon);
-
-  // Which auxiliary panel is open — one at a time, and usually neither, so
-  // the sheet stays two rows and the map keeps the screen. The fix-quality
-  // line lives in the icon bar below (the operator still gets told which
-  // kind of fix this is). No connection forces the fallback panel open:
-  // those formats ARE the product then.
-  const [panel, setPanel] = useState<'none' | 'options' | 'fallback'>('none');
-  useEffect(() => {
-    if (!online) setPanel('fallback');
-  }, [online]);
-  const togglePanel = (which: 'options' | 'fallback') =>
-    setPanel((current) => (current === which ? 'none' : which));
+  const togglePanel = onTogglePanel;
 
   return (
     <div className="map-sheet">
@@ -845,38 +910,22 @@ function LocatedSheet({
             </div>
           </div>
 
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={thirdParty}
-              onChange={(event) => setThirdParty(event.target.checked)}
-            />
-            <span>
-              <strong>This is not where I am</strong>
-              <small>I'm reporting somewhere else — drag the pin to it</small>
-            </span>
-          </label>
-
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={mode === 'live' && online}
-              disabled={!online}
-              onChange={(event) => setMode(event.target.checked ? 'live' : 'static')}
-            />
-            <span>
-              <strong>Keep updating my position</strong>
-              <small>
-                {online
-                  ? "For when you're moving. Uses more battery."
-                  : 'Needs a connection — a code that follows you has to live on the server.'}
-              </small>
-            </span>
-          </label>
+          {/* The third-party and live-update toggles are benched for now:
+              live mode has never been verified end to end, and the report-
+              somewhere-else flow already exists via the start screen's link.
+              The state machinery behind both is kept. */}
 
           <input
             className="note-input"
-            placeholder="Anything else? e.g. third floor, back stairwell"
+            placeholder="Name this share — stays on this phone"
+            value={name}
+            maxLength={60}
+            onChange={(event) => setName(event.target.value)}
+          />
+
+          <input
+            className="note-input"
+            placeholder="Note for the operator, e.g. third floor, back stairwell"
             value={note}
             maxLength={280}
             onChange={(event) => setNote(event.target.value)}

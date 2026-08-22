@@ -59,6 +59,21 @@ export function Resolve() {
 
   useEffect(() => inputRef.current?.focus(), []);
 
+  // A shared link carries its code (?code=...), so the person it was sent to
+  // gets the position in one tap with nothing to type. Runs once — lookup is
+  // deliberately not re-fired on later re-renders or key changes.
+  const autoResolvedRef = useRef(false);
+  useEffect(() => {
+    if (autoResolvedRef.current) return;
+    autoResolvedRef.current = true;
+    const fromLink = new URLSearchParams(window.location.search).get('code');
+    if (fromLink !== null && fromLink !== '') {
+      setInput(fromLink);
+      void lookup(fromLink);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (session === null) return;
     const timer = setInterval(() => forceTick((n) => n + 1), 1000);

@@ -332,14 +332,25 @@ export function Map({
     return () => cancelAnimationFrame(measure);
   }, [map, fullscreen]);
 
-  // Escape leaves full screen; the collapse button is the touch peer.
+  // Full screen is a history entry, so the phone's Back button closes it —
+  // every close path (pill, Escape, Back itself) goes through one pop.
+  const openFullscreen = () => {
+    window.history.pushState({ shareUi: 'mapfull' }, '');
+    setFullscreen(true);
+  };
+  const closeFullscreen = () => window.history.back();
   useEffect(() => {
     if (!fullscreen) return;
+    const onPop = () => setFullscreen(false);
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setFullscreen(false);
+      if (event.key === 'Escape') closeFullscreen();
     };
+    window.addEventListener('popstate', onPop);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [fullscreen]);
 
   // The "could not locate you" note clears itself.
@@ -591,7 +602,7 @@ export function Map({
         <button
           type="button"
           className={`map-locate ${slotClass(expandSlot)}`}
-          onClick={() => setFullscreen(true)}
+          onClick={openFullscreen}
           aria-label="Make the map full screen"
           title="Full screen"
         >
@@ -600,7 +611,7 @@ export function Map({
       )}
 
       {fullscreen && (
-        <button type="button" className="map-close-pill" onClick={() => setFullscreen(false)}>
+        <button type="button" className="map-close-pill" onClick={closeFullscreen}>
           <CloseIcon /> Close map
         </button>
       )}
