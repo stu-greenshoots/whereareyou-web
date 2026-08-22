@@ -19,7 +19,7 @@ Three build-time env vars matter. **Miss `VITE_API_BASE` and session codes
 break; miss `VITE_DEMO_API_KEY` and look-up 401s.**
 
 ```bash
-cd whereareyou-web
+cd ~/code/fun/whereareyou/web
 
 # 1. Build for the live site (root base, wired to the deployed API + demo key)
 VITE_API_BASE=https://whereareyou-api.onrender.com \
@@ -56,7 +56,7 @@ gh-pages branch is build output only.
 ```bash
 npm run dev        # https://localhost:5173 (self-signed cert; geolocation needs HTTPS)
 ```
-Runs the API separately (`cd ../whereareyou-api && REDIS_URL=redis://localhost:6379 npm run dev`);
+Runs the API separately (`cd ../api && REDIS_URL=redis://localhost:6379 npm run dev`);
 the dev server proxies `/v1` and `/health` to `localhost:8787`.
 
 ## Notes / gotchas
