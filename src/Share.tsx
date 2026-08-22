@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
 import type { CreateSessionResponse, Position, SessionMode, Sketch } from '@whereareyou/protocol';
-import { mintSession, revokeSession, updatePosition, upgradeToLive } from './api.js';
+import { mintSession, revokeSession, upgradeToLive } from './api.js';
 import { useConnectivity } from './connectivity.js';
 import { Map } from './Map.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap } from './SessionMap.jsx';
+import { connectLive } from './live.js';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
 
@@ -526,18 +527,35 @@ export function Share() {
     void mint(phase.position, null);
   }, [phase, linkUp, mint, fallToOfflineCode, stopAcquire]);
 
-  // Live mode: stream position updates until expiry or revocation.
+  // Live mode with the code screen up: the owner holds a HEADLESS room
+  // connection — in the room, streaming, roster ignored — so anyone who has
+  // joined sees the live pin without the owner needing the map open. The
+  // socket also persists the owner's position to the store, so a plain
+  // resolve stays truthful too (this replaced the old PATCH loop). Opening
+  // the live map closes this connection and opens its own; viewers see the
+  // owner blink out and back in — a known, harmless POC seam.
   useEffect(() => {
     if (phase.name !== 'shared' || phase.session === undefined || mode !== 'live') return;
-    // The live map streams over its own socket (which also persists to the
-    // store) — two writers for one pin helps nobody.
     if (liveOpen) return;
     if (!('geolocation' in navigator)) return;
 
-    const { code, updateToken } = phase.session;
+    const trimmedName = shareName.trim();
+    const handle = connectLive({
+      code: phase.session.code,
+      updateToken: phase.session.updateToken,
+      share: true,
+      ...(trimmedName !== '' ? { name: trimmedName } : {}),
+      handlers: {
+        onWelcome: () => {},
+        onParticipant: () => {},
+        onLeft: () => {},
+        onEnded: () => {},
+        onStatus: () => {},
+      },
+    });
     watchRef.current = navigator.geolocation.watchPosition(
       (fix) => {
-        void updatePosition(code, updateToken, {
+        handle.sendPosition({
           lat: fix.coords.latitude,
           lon: fix.coords.longitude,
           accuracyM: fix.coords.accuracy,
@@ -554,7 +572,11 @@ export function Share() {
     return () => {
       if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
       watchRef.current = null;
+      handle.close();
     };
+    // shareName is read once at connect on purpose — renaming mid-session
+    // must not blip the owner out of their own room.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, mode, liveOpen]);
 
   const startAgain = useCallback(() => {
