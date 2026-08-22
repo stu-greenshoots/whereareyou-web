@@ -220,11 +220,14 @@ export function Share() {
   // Everything before a code exists is map-first: the map IS the screen and
   // the controls float over it. Once a code exists the code is the product
   // and the page becomes the issued document again.
-  // liveOpen counts: the owner's live map is a map-first screen layered over
-  // the code phase, and this toggle must not strip the body class out from
-  // under SessionMap (parent effects run after child effects).
-  const mapFirst =
-    (phase.name !== 'shared' && phase.name !== 'offline-shared') || liveOpen;
+  // Two related flags, deliberately separate — conflating them once sent
+  // "Make this a live session" back to the start screen: preMint picks the
+  // RENDER branch (start/located screens); mapFirst only drives the body
+  // class, and must stay on while the owner's live map is up so this toggle
+  // doesn't strip the class out from under SessionMap (parent effects run
+  // after child effects).
+  const preMint = phase.name !== 'shared' && phase.name !== 'offline-shared';
+  const mapFirst = preMint || liveOpen;
 
   useEffect(() => {
     document.body.classList.toggle('map-first', mapFirst);
@@ -637,7 +640,24 @@ export function Share() {
 
   // ---- Render -----------------------------------------------------------
 
-  if (mapFirst) {
+  if (liveOpen && phase.name === 'shared') {
+    const { session } = phase;
+    return (
+      <SessionMap
+        code={session.code}
+        displayCode={formatCode(session.code)}
+        role="owner"
+        updateToken={session.updateToken}
+        share
+        {...(shareName.trim() !== '' ? { name: shareName.trim() } : {})}
+        initialPosition={phase.position}
+        initialSketch={sketch}
+        onLeave={() => setLiveOpen(false)}
+      />
+    );
+  }
+
+  if (preMint) {
     const located = phase.name === 'located' || phase.name === 'minting';
     const centre = located
       ? phase.position
@@ -841,22 +861,6 @@ export function Share() {
   const { session } = phase;
   const remaining = timeRemaining(session.expiresAt);
   const expired = remaining === 'expired';
-
-  if (liveOpen) {
-    return (
-      <SessionMap
-        code={session.code}
-        displayCode={formatCode(session.code)}
-        role="owner"
-        updateToken={session.updateToken}
-        share
-        {...(shareName.trim() !== '' ? { name: shareName.trim() } : {})}
-        initialPosition={position}
-        initialSketch={sketch}
-        onLeave={() => setLiveOpen(false)}
-      />
-    );
-  }
 
   return (
     <div className="stack">
