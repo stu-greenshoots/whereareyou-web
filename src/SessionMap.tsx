@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  MAX_CHAT_HISTORY,
   MAX_CHAT_TEXT_CHARS,
   MAX_EVENT_HISTORY,
   MAX_MARKER_NAME_CHARS,
@@ -62,12 +63,56 @@ import { inferSource, timeRemaining } from './formats.js';
  * names, trails and positions are user content, end of story.
  */
 
+/** The room's side panels — also the vocabulary of push deep links. */
+export type LivePanel = 'chat' | 'activity' | 'people';
+
+/** The panel a URL fragment names, if any. Push payload urls arrive as
+    `lookup?code=<code>#chat|#activity|#people`; the fragment is which panel
+    the notification was about. Anything else is not ours — ignored. */
+export function panelFromFragment(hash: string): LivePanel | null {
+  return hash === '#chat' || hash === '#activity' || hash === '#people'
+    ? (hash.slice(1) as LivePanel)
+    : null;
+}
+
 /** How long the little "said something" bubble hangs over a sender. */
 const CHAT_FLAG_MS = 4000;
 /** An unacked zone-create is withdrawn after this — the echo is the ack. */
 const ZONE_ACK_MS = 15_000;
 /** Start showing the chat counter when this near the cap. */
 const CHAT_COUNTER_AT = 50;
+
+/**
+ * The ids of chat messages THIS DEVICE sent into a session, per code —
+ * sessionStorage, because participant ids are per-connection: after the
+ * code-screen ↔ live-map connection churn our own history arrives under a
+ * participantId that is no longer ours, and without this record our own
+ * words would render as "Someone". Ids only, never text — nothing here is
+ * content. Capped at the server's own retention: an id that can no longer
+ * appear in a welcome is not worth remembering.
+ */
+function sentChatKey(code: string): string {
+  return `sentChat.${code}`;
+}
+
+function loadSentChatIds(code: string): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(sentChatKey(code));
+    if (raw === null) return new Set();
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistSentChatIds(code: string, ids: Set<string>): void {
+  try {
+    sessionStorage.setItem(sentChatKey(code), JSON.stringify([...ids].slice(-MAX_CHAT_HISTORY)));
+  } catch {
+    // Convenience only — the current connection still renders "You" by id.
+  }
+}
 
 /** Relative time for feeds and cards — deliberately coarse and calm. */
 function timeAgo(iso: string, now = Date.now()): string {
@@ -143,6 +188,9 @@ export interface SessionMapProps {
   onLeave: () => void;
   /** Which basemap this surface draws — `dark` on the console. */
   tiles?: TileVariant;
+  /** Panel to open as the screen mounts — how a tapped push notification
+      lands on the thing it announced (chat, activity, people). */
+  initialPanel?: LivePanel;
 }
 
 export function SessionMap({
@@ -160,6 +208,7 @@ export function SessionMap({
   onMarkersShared,
   onLeave,
   tiles = 'voyager',
+  initialPanel,
 }: SessionMapProps) {
   const [participants, setParticipants] = useState<Record<string, LiveParticipant>>({});
   const [selfId, setSelfId] = useState<string | null>(null);
@@ -178,7 +227,9 @@ export function SessionMap({
   /** A drawn-but-unnamed zone, waiting for its name. */
   const [zoneDraft, setZoneDraft] = useState<{ center: Position; radiusM: number } | null>(null);
   const [zoneNameInput, setZoneNameInput] = useState('');
-  const [panel, setPanel] = useState<'none' | 'chat' | 'activity' | 'people'>('none');
+  const [panel, setPanel] = useState<'none' | 'chat' | 'activity' | 'people'>(
+    initialPanel ?? 'none',
+  );
   /** Which participant's card is open. Their trail shows while it is. */
   const [card, setCard] = useState<string | null>(null);
   /** The compass overlay, carrying the outcome of the iOS permission ask. */
@@ -203,6 +254,9 @@ export function SessionMap({
   /** Zone and marker names ever seen — events may refer to removed ones. */
   const zoneNamesRef = useRef<Record<string, string>>({});
   const markerLabelsRef = useRef<Record<string, string>>({});
+  /** Ids of chat messages this device sent, across connection churn. */
+  const sentChatIdsRef = useRef<Set<string> | null>(null);
+  if (sentChatIdsRef.current === null) sentChatIdsRef.current = loadSentChatIds(code);
 
   // The room takes the whole screen, like the map-first share flow.
   useEffect(() => {
@@ -285,34 +339,54 @@ export function SessionMap({
     });
   }, []);
 
-  const applyChat = useCallback((message: ChatMessage) => {
-    const mine = message.participantId === selfIdRef.current;
-    if (mine) {
-      // The fanout of our own message replaces its optimistic copy.
-      const pending = pendingChatRef.current;
-      const index = pending.findIndex((entry) => entry.text === message.text);
-      if (index !== -1) {
-        const [entry] = pending.splice(index, 1);
-        setChat((current) => current.map((m) => (m.id === entry!.localId ? message : m)));
-        return;
+  /** Whether a chat message is OURS: same connection, or an id this device
+      sent under an earlier connection (the per-code sessionStorage set). */
+  const isMine = useCallback(
+    (message: ChatMessage): boolean =>
+      message.participantId === selfIdRef.current ||
+      (sentChatIdsRef.current?.has(message.id) ?? false),
+    [],
+  );
+
+  const applyChat = useCallback(
+    (message: ChatMessage) => {
+      if (message.participantId === selfIdRef.current) {
+        // The fanout of our own message replaces its optimistic copy — and
+        // its server id joins the per-code sent set, so this message keeps
+        // reading "You" after the next connection churn changes our
+        // participantId out from under it.
+        const pending = pendingChatRef.current;
+        const index = pending.findIndex((entry) => entry.text === message.text);
+        if (index !== -1) {
+          const [entry] = pending.splice(index, 1);
+          const sent = sentChatIdsRef.current;
+          if (sent !== null) {
+            sent.add(message.id);
+            persistSentChatIds(code, sent);
+          }
+          setChat((current) => current.map((m) => (m.id === entry!.localId ? message : m)));
+          return;
+        }
       }
-    }
-    setChat((current) => [...current, message]);
-    if (mine) return;
-    if (panelRef.current !== 'chat') setUnread((n) => n + 1);
-    const sender = message.participantId;
-    const stamp = Date.now();
-    setChatFlags((current) => ({ ...current, [sender]: stamp }));
-    const existing = flagTimersRef.current[sender];
-    if (existing !== undefined) window.clearTimeout(existing);
-    flagTimersRef.current[sender] = window.setTimeout(() => {
-      setChatFlags((current) => {
-        if (current[sender] !== stamp) return current;
-        const { [sender]: _done, ...rest } = current;
-        return rest;
-      });
-    }, CHAT_FLAG_MS);
-  }, []);
+      const mine = isMine(message);
+      setChat((current) => [...current, message]);
+      if (mine) return;
+      if (panelRef.current !== 'chat') setUnread((n) => n + 1);
+      const sender = message.participantId;
+      const stamp = Date.now();
+      setChatFlags((current) => ({ ...current, [sender]: stamp }));
+      const existing = flagTimersRef.current[sender];
+      if (existing !== undefined) window.clearTimeout(existing);
+      flagTimersRef.current[sender] = window.setTimeout(() => {
+        setChatFlags((current) => {
+          if (current[sender] !== stamp) return current;
+          const { [sender]: _done, ...rest } = current;
+          return rest;
+        });
+      }, CHAT_FLAG_MS);
+    },
+    [code, isMine],
+  );
 
   const applyZoneCreated = useCallback((zone: Zone) => {
     zoneNamesRef.current[zone.id] = zone.name;
@@ -404,6 +478,29 @@ export function SessionMap({
     );
     return () => navigator.geolocation.clearWatch(watch);
   }, [share]);
+
+  // The welcome roster is everyone ALREADY here — the server never includes
+  // the joining connection itself — so without this, participants[selfId]
+  // is forever undefined and tapping your own pin or dot opens nothing.
+  // Synthesise the self entry locally from what we presented at hello, and
+  // keep its position current as our own stream moves.
+  useEffect(() => {
+    if (selfId === null) return;
+    setParticipants((current) => {
+      const now = new Date().toISOString();
+      const self: LiveParticipant = {
+        id: selfId,
+        owner: role === 'owner',
+        joinedAt: current[selfId]?.joinedAt ?? now,
+        lastSeenAt: now,
+        updatedAt: now,
+        ...(name !== undefined && name !== '' ? { name } : {}),
+        ...(avatar !== undefined && avatar !== '' ? { avatar } : {}),
+        ...(myPosition !== null ? { position: myPosition } : {}),
+      };
+      return { ...current, [selfId]: self };
+    });
+  }, [selfId, myPosition, role, name, avatar]);
 
   /** Every committed change to my marker list: state, parent, wire. */
   const commitMarkers = useCallback(
@@ -592,15 +689,36 @@ export function SessionMap({
 
   const eventLine = useCallback(
     (event: LiveEvent): string => {
-      const who = displayName(event.participantId);
+      // Identity order per the contract: the server-stamped name (taken at
+      // event time — the actor may have left since), then the roster and
+      // this screen's registry of everyone seen, then a generic label. Our
+      // own connection still reads "You" first.
+      const stamped = (event.name ?? '').trim();
+      const who =
+        event.participantId === selfId
+          ? 'You'
+          : stamped !== ''
+            ? stamped
+            : displayName(event.participantId);
+      const target = (event.targetName ?? '').trim();
       if (event.kind === 'reached') {
-        const label = event.markerId !== undefined ? markerLabelsRef.current[event.markerId] : undefined;
+        const label =
+          target !== ''
+            ? `“${target}”`
+            : event.markerId !== undefined
+              ? markerLabelsRef.current[event.markerId]
+              : undefined;
         return `${who} reached ${label ?? 'a marked spot'}`;
       }
-      const zoneName = event.zoneId !== undefined ? zoneNamesRef.current[event.zoneId] : undefined;
+      const zoneName =
+        target !== ''
+          ? target
+          : event.zoneId !== undefined
+            ? zoneNamesRef.current[event.zoneId]
+            : undefined;
       return `${who} ${event.kind} ${zoneName !== undefined ? `“${zoneName}”` : 'a zone'}`;
     },
-    [displayName],
+    [displayName, selfId],
   );
 
   // The blue pin: me if I am the owner, the owner's latest fix if not.
@@ -626,9 +744,19 @@ export function SessionMap({
       });
     }
     // A sharing joiner appears to themselves too — seeing your own dot is
-    // how you know the room can see you.
+    // how you know the room can see you. Tapping it opens your own card,
+    // the same as tapping anyone else's dot.
     if (role === 'joiner' && share && myPosition !== null) {
-      dots.push({ id: 'self', label: name ?? 'Me', avatar, position: myPosition });
+      dots.push({
+        id: 'self',
+        label: name ?? 'Me',
+        avatar,
+        position: myPosition,
+        onTap: () => {
+          const self = selfIdRef.current;
+          if (self !== null) setCard(self);
+        },
+      });
     }
     return dots;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -664,13 +792,21 @@ export function SessionMap({
   }, [participants, selfId, myMarkers, name]);
 
   const mapZones = useMemo(() => {
-    const list: MapZone[] = zones.map((zone) => ({
-      id: zone.id,
-      name: zone.name,
-      center: { lat: zone.center.lat, lon: zone.center.lon },
-      radiusM: zone.radiusM,
-      onRemove: () => removeZone(zone.id),
-    }));
+    const list: MapZone[] = zones.map((zone) => {
+      // The × only appears on zones the server would actually let us remove:
+      // ours (same-connection participantId) or, as the session owner, any.
+      // Matches the server's silent-drop gate — and inherits its POC caveat:
+      // an anonymous creator who reconnects gets a new participantId and
+      // loses the affordance on their own zone. Accepted, not fought.
+      const removable = role === 'owner' || zone.createdBy === selfId;
+      return {
+        id: zone.id,
+        name: zone.name,
+        center: { lat: zone.center.lat, lon: zone.center.lon },
+        radiusM: zone.radiusM,
+        ...(removable ? { onRemove: () => removeZone(zone.id) } : {}),
+      };
+    });
     if (zoneDraft !== null) {
       const preview = zoneNameInput.trim();
       list.push({
@@ -681,7 +817,7 @@ export function SessionMap({
       });
     }
     return list;
-  }, [zones, zoneDraft, zoneNameInput, removeZone]);
+  }, [zones, zoneDraft, zoneNameInput, removeZone, role, selfId]);
 
   const flags = useMemo(() => {
     const list: MapChatFlag[] = [];
@@ -790,6 +926,15 @@ export function SessionMap({
         zonesFull={zonesFull}
         markersFull={myMarkers.length >= MAX_SESSION_MARKERS}
         pinAvatar={pinFace}
+        // The locate-me control, present on every other map view. On a
+        // sharing surface it recentres on the position we already stream
+        // (the blue pin / our own dot); a watcher gets the one-shot
+        // viewer-dot behaviour. Top-right, clear of the drawing tools and
+        // live bar (bottom) and the zoom control (top-left); the owner's
+        // profile float shifts it down a slot via CSS.
+        showViewerLocation
+        selfPosition={share ? (myPosition ?? (role === 'owner' ? initialPosition : null)) : null}
+        viewerAvatar={avatar ?? null}
         fullscreenLocked
         className="map map-fill"
         fullscreenOverlay={
@@ -966,7 +1111,7 @@ export function SessionMap({
           {panel === 'chat' && (
             <ChatTab
               chat={chat}
-              selfId={selfId}
+              isMine={isMine}
               displayName={displayName}
               participants={participants}
               meta={metaRef.current}
@@ -1109,7 +1254,7 @@ function Face({ name, avatar }: { name: string | null; avatar: string | null }) 
 
 function ChatTab({
   chat,
-  selfId,
+  isMine,
   displayName,
   participants,
   meta,
@@ -1121,7 +1266,9 @@ function ChatTab({
   onSubmit,
 }: {
   chat: ChatMessage[];
-  selfId: string | null;
+  /** Ours by connection OR by the per-code sent-id record — never rendered
+      as "Someone" just because our participantId changed since sending. */
+  isMine: (message: ChatMessage) => boolean;
   displayName: (participantId: string) => string;
   participants: Record<string, LiveParticipant>;
   meta: Record<string, { name: string | null; avatar: string | null; owner: boolean }>;
@@ -1150,19 +1297,34 @@ function ChatTab({
           <p className="live-empty">No messages yet.</p>
         ) : (
           chat.map((message) => {
-            const mine = message.participantId === selfId;
+            const mine = isMine(message);
+            // Identity order per the contract: the server-stamped sender
+            // (taken at send time — the sender may have left since), then
+            // the live roster, then this screen's registry, then generic.
+            const stampedName = (message.name ?? '').trim();
+            const senderName =
+              stampedName !== '' ? stampedName : displayName(message.participantId);
             const avatar =
-              participants[message.participantId]?.avatar ?? meta[message.participantId]?.avatar ?? null;
+              message.avatar ??
+              participants[message.participantId]?.avatar ??
+              meta[message.participantId]?.avatar ??
+              null;
             return (
               <div key={message.id} className={`chat-msg ${mine ? 'chat-mine' : ''}`}>
                 {!mine && (
                   <Face
-                    name={participants[message.participantId]?.name ?? meta[message.participantId]?.name ?? null}
+                    name={
+                      stampedName !== ''
+                        ? stampedName
+                        : (participants[message.participantId]?.name ??
+                          meta[message.participantId]?.name ??
+                          null)
+                    }
                     avatar={avatar}
                   />
                 )}
                 <div className="chat-body">
-                  {!mine && <span className="chat-sender">{displayName(message.participantId)}</span>}
+                  {!mine && <span className="chat-sender">{senderName}</span>}
                   <p className="chat-text">{message.text}</p>
                   <span className="chat-time">{clockTime(message.at)}</span>
                 </div>

@@ -124,7 +124,13 @@ export interface MapZone {
   name: string;
   center: { lat: number; lon: number };
   radiusM: number;
-  /** When set, the label chip grows a small ×. Any participant may remove. */
+  /**
+   * When set, the label chip grows a small ×. The parent only sets this on
+   * zones this participant is ALLOWED to remove — the server honours a
+   * remove from the zone's creator (same connection) or the session owner
+   * and silently drops everyone else's, so offering the affordance more
+   * widely would be a button that lies.
+   */
   onRemove?: (() => void) | undefined;
 }
 
@@ -438,6 +444,13 @@ export interface MapProps {
    */
   showViewerLocation?: boolean;
   /**
+   * Where this viewer ALREADY is on the map — a live surface that draws us
+   * (the owner's blue pin, a sharing joiner's dot). When set, the
+   * viewer-location control recentres on it instead of fetching a fresh fix
+   * and drawing a second, instantly-stale dot for the same person.
+   */
+  selfPosition?: { lat: number; lon: number } | null;
+  /**
    * The account photo of whoever this map's PIN is — shown inside the pin
    * ring. The ring keeps its meaning-colour; the photo only adds a face.
    * Never set for third-party reports: the pin is not the sharer there.
@@ -483,6 +496,7 @@ export function Map({
   moveOnClick = true,
   allowFullscreen = false,
   showViewerLocation = false,
+  selfPosition = null,
   pinAvatar = null,
   viewerAvatar = null,
   className,
@@ -1121,6 +1135,12 @@ export function Map({
   // and it draws a dot rather than moving anything that matters.
   const locateViewer = () => {
     if (map === null) return;
+    // A live surface already draws this viewer — recentring on that is the
+    // whole job, and cheaper and truer than a second one-shot fix.
+    if (selfPosition !== null) {
+      map.panTo([selfPosition.lat, selfPosition.lon]);
+      return;
+    }
     if (!('geolocation' in navigator)) {
       setViewerNote('This device cannot provide a location.');
       return;
@@ -1209,7 +1229,9 @@ export function Map({
   // itself is unaffected and is written out in full directly below.
   return (
     <div className={`map-frame ${fullscreen ? 'map-frame-full' : ''} ${fullscreenLocked ? 'map-frame-locked' : ''}`}>
-      <div ref={containerRef} className={className ?? 'map'} />
+      {/* `map-tiles-dark` scopes the legibility filter to the tile pane of
+          dark basemaps only — see styles.css for why Dark Matter needs it. */}
+      <div ref={containerRef} className={`${className ?? 'map'}${tiles === 'dark' ? ' map-tiles-dark' : ''}`} />
       {onLocate !== undefined && (
         <button
           type="button"

@@ -167,6 +167,11 @@ export function connectLive(options: {
         handlers.onChat?.({
           id: message.id,
           participantId: message.participantId,
+          // The server-stamped sender identity rides along: participant ids
+          // are per-connection, so history rendered later must not depend on
+          // the sender still being in the roster.
+          ...(message.name !== undefined ? { name: message.name } : {}),
+          ...(message.avatar !== undefined ? { avatar: message.avatar } : {}),
           text: message.text,
           at: message.at,
         });
@@ -178,8 +183,13 @@ export function connectLive(options: {
         handlers.onEvent?.({
           kind: message.kind,
           participantId: message.participantId,
+          // `name`/`targetName` are stamped at event time by the server —
+          // the actor may have left and the zone may be gone by render time,
+          // so dropping them here would strand the feed on "Someone".
+          ...(message.name !== undefined ? { name: message.name } : {}),
           ...(message.zoneId !== undefined ? { zoneId: message.zoneId } : {}),
           ...(message.markerId !== undefined ? { markerId: message.markerId } : {}),
+          ...(message.targetName !== undefined ? { targetName: message.targetName } : {}),
           at: message.at,
         });
       } else if (message.type === 'expiry') {
