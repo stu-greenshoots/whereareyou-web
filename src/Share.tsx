@@ -403,6 +403,7 @@ export function Share() {
           locating={acquiring}
           sketch={sketch}
           onSketchChange={setSketch}
+          allowFullscreen
           onMove={(lat, lon, accuracyM) => {
             // A hand-placed pin is a deliberate choice, not a sensor guess — so
             // its accuracy comes from how far the map is zoomed in, which the

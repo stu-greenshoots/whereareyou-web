@@ -748,7 +748,8 @@
   border: none;
 }
 
-.map-viewer-locate { top: 58px; }
+.map-stack-2 { top: 58px; }
+.map-stack-3 { top: 106px; }
 
 /* Transient failure note for the viewer-locate control. */
 .map-viewer-note {

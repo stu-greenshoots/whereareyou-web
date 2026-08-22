@@ -104,10 +104,10 @@ export interface MapProps {
    */
   fitSketch?: boolean;
   /**
-   * Adds an expand control (top-right, where the locate control would sit —
-   * do not combine with onLocate) that takes the map full screen. For the
-   * look-up side: its map is small, and the person who resolved a code is
-   * often trying to move toward it.
+   * Adds an expand control that takes the map full screen — for the look-up
+   * side, whose map is small, and for drawing, where a 280px strip is a
+   * cramped canvas. The top-right controls stack in order: locate, expand,
+   * viewer-locate, whichever of them are present.
    */
   allowFullscreen?: boolean;
   /**
@@ -483,6 +483,12 @@ export function Map({
     );
   };
 
+  // The top-right controls stack downward in a fixed order; each one's
+  // offset depends only on which controls precede it.
+  const expandSlot = onLocate !== undefined ? 2 : 1;
+  const viewerSlot = (onLocate !== undefined ? 1 : 0) + (allowFullscreen ? 1 : 0) + 1;
+  const slotClass = (slot: number) => (slot === 2 ? 'map-stack-2' : slot === 3 ? 'map-stack-3' : '');
+
   const shapeCount = sketch?.shapes.length ?? 0;
 
   const undoShape = () => {
@@ -549,7 +555,7 @@ export function Map({
       {allowFullscreen && (
         <button
           type="button"
-          className="map-locate"
+          className={`map-locate ${slotClass(expandSlot)}`}
           onClick={() => setFullscreen((current) => !current)}
           aria-label={fullscreen ? 'Leave full screen' : 'Make the map full screen'}
           title={fullscreen ? 'Leave full screen' : 'Full screen'}
@@ -561,7 +567,7 @@ export function Map({
       {showViewerLocation && (
         <button
           type="button"
-          className="map-locate map-viewer-locate"
+          className={`map-locate ${slotClass(viewerSlot)}`}
           onClick={locateViewer}
           disabled={viewerBusy}
           aria-label="Show where I am on the map"
