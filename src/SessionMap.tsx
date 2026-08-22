@@ -24,6 +24,9 @@ export interface SessionMapProps {
   name?: string;
   initialPosition: { lat: number; lon: number; accuracyM: number };
   initialSketch?: Sketch | null;
+  /** Fires on every committed change to OUR drawing, so the parent can keep
+      it when this screen closes (and persist it across reloads). */
+  onSketchShared?: (sketch: Sketch | null) => void;
   onLeave: () => void;
 }
 
@@ -36,6 +39,7 @@ export function SessionMap({
   name,
   initialPosition,
   initialSketch = null,
+  onSketchShared,
   onLeave,
 }: SessionMapProps) {
   const [participants, setParticipants] = useState<Record<string, LiveParticipant>>({});
@@ -92,6 +96,14 @@ export function SessionMap({
       },
     });
     handleRef.current = handle;
+    // A restored drawing exists only in local state until it travels once.
+    if (initialSketch !== null && initialSketch.shapes.length > 0) {
+      try {
+        handle.sendSketch(encodeSketch(initialSketch));
+      } catch {
+        // Stays local.
+      }
+    }
     return () => {
       handleRef.current = null;
       handle.close();
@@ -149,13 +161,15 @@ export function SessionMap({
 
   const changeSketch = useCallback((sketch: Sketch | null) => {
     setMySketch(sketch);
+    onSketchShared?.(sketch);
     // An empty sketch is announced too — clearing must clear everywhere.
     try {
       handleRef.current?.sendSketch(sketch === null ? 'AQAA' : encodeSketch(sketch));
     } catch {
       // An unencodable sketch stays local; the room just doesn't hear it.
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onSketchShared]);
 
   const roster = Object.values(participants);
   const owner = roster.find((entry) => entry.owner);

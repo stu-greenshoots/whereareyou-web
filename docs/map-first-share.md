@@ -45,6 +45,7 @@ share if it was unnamed.
 
 | Key | What |
 |---|---|
+| `activeShare` | The one currently-running session — code, update token, expiry, mode, position, and the owner's encoded drawing — so a reload resumes ownership (and the drawing) via the start screen's chip. Cleared on revoke; ignored once expired. |
 | `shareHistory` | Up to 8 past shares — position, name, note, encoded sketch, when. Tapping one re-enters the located screen preloaded; the caller still presses the button themselves. "Clear this list" sits beside it. |
 | `resolverKey` (sessionStorage) | The console's API key field. |
 

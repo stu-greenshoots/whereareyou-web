@@ -103,6 +103,9 @@ interface ActiveShare {
   expiresAt: string;
   mode: SessionMode;
   position: Position;
+  /** The owner's drawing, encoded — restored on resume so a reload never
+      quietly loses what was drawn against a still-live code. */
+  sketch: string | null;
 }
 
 const ACTIVE_KEY = 'activeShare';
@@ -194,11 +197,31 @@ export function Share() {
   const [shareName, setShareName] = useState('');
   /** The owner's live map is open over the code screen. */
   const [liveOpen, setLiveOpen] = useState(false);
+  /** Drawings made IN the live map survive leaving it and reloading. */
+  const adoptLiveSketch = useCallback((next: Sketch | null) => {
+    setSketch(next);
+    setResumable((current) => {
+      if (current === null) return current;
+      let encoded: string | null = null;
+      if (next !== null && next.shapes.length > 0) {
+        try {
+          encoded = encodeSketch(next);
+        } catch {
+          encoded = null;
+        }
+      }
+      const updated = { ...current, sketch: encoded };
+      persistActiveShare(updated);
+      return updated;
+    });
+  }, []);
   const [liveError, setLiveError] = useState<string | null>(null);
   /** Which sheet panel is open. Hoisted here so browser Back can close it. */
   const [sheetPanel, setSheetPanel] = useState<'none' | 'options' | 'fallback'>('none');
   const sheetPanelRef = useRef(sheetPanel);
   sheetPanelRef.current = sheetPanel;
+  const sketchRef = useRef(sketch);
+  sketchRef.current = sketch;
   /** Where the flow is, coarsely — drives what Back means right now. */
   const phaseGroupRef = useRef<'start' | 'placed' | 'done'>('start');
   const [history, setHistory] = useState<PastShare[]>(loadHistory);
@@ -509,6 +532,7 @@ export function Share() {
         expiresAt: result.data.expiresAt,
         mode,
         position,
+        sketch: sketchPayload ?? null,
       };
       setResumable(active);
       persistActiveShare(active);
@@ -556,6 +580,16 @@ export function Share() {
         onStatus: () => {},
       },
     });
+    // Joiners only see what travels the wire — after a reload the drawing
+    // exists only in restored local state, so announce it once.
+    const current = sketchRef.current;
+    if (current !== null && current.shapes.length > 0) {
+      try {
+        handle.sendSketch(encodeSketch(current));
+      } catch {
+        // An unencodable sketch stays local.
+      }
+    }
     watchRef.current = navigator.geolocation.watchPosition(
       (fix) => {
         handle.sendPosition({
@@ -652,6 +686,7 @@ export function Share() {
         {...(shareName.trim() !== '' ? { name: shareName.trim() } : {})}
         initialPosition={phase.position}
         initialSketch={sketch}
+        onSketchShared={adoptLiveSketch}
         onLeave={() => setLiveOpen(false)}
       />
     );
@@ -759,6 +794,7 @@ export function Share() {
                       className="button button-primary resume-chip"
                       onClick={() => {
                         setMode(resumable.mode);
+                        setSketch(resumable.sketch !== null ? decodeSketch(resumable.sketch) : null);
                         setPhase({
                           name: 'shared',
                           position: resumable.position,
