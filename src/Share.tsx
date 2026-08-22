@@ -193,14 +193,16 @@ export function Share() {
    * Back (or tapping the icon again) pops it and the pop closes the panel.
    */
   const openSheetPanel = useCallback((which: 'options' | 'fallback', force = false) => {
-    setSheetPanel((current) => {
-      if (current === which) {
-        if (!force) window.history.back(); // the popstate handler closes it
-        return current;
-      }
-      if (current === 'none') window.history.pushState({ shareUi: 'panel' }, '');
-      return which;
-    });
+    // Side effects stay OUT of the setState updater — React may run updaters
+    // more than once (StrictMode does), and a doubled history.back() pops the
+    // panel entry AND the located entry, dumping the user on the start screen.
+    const current = sheetPanelRef.current;
+    if (current === which) {
+      if (!force) window.history.back(); // the popstate handler closes it
+      return;
+    }
+    if (current === 'none') window.history.pushState({ shareUi: 'panel' }, '');
+    setSheetPanel(which);
   }, []);
 
   // No connection: the fallback formats ARE the product — force them open.
@@ -609,6 +611,16 @@ export function Share() {
                 acquiring={acquiring}
                 online={online}
                 sketch={sketch}
+                thirdParty={thirdParty}
+                onSearchPick={(lat, lon, accuracyM, label) => {
+                  stopAcquire();
+                  // A picked place is a handy default name for the history.
+                  if (shareName.trim() === '') setShareName(label.split(',')[0] ?? '');
+                  setPhase({
+                    name: 'located',
+                    position: { lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
+                  });
+                }}
                 note={note}
                 setNote={setNote}
                 name={shareName}
@@ -834,6 +846,8 @@ function LocatedSheet({
   acquiring,
   online,
   sketch,
+  thirdParty,
+  onSearchPick,
   note,
   setNote,
   name,
@@ -850,6 +864,8 @@ function LocatedSheet({
   acquiring: boolean;
   online: boolean;
   sketch: Sketch | null;
+  thirdParty: boolean;
+  onSearchPick: (lat: number, lon: number, accuracyM: number, label: string) => void;
   note: string;
   setNote: (value: string) => void;
   name: string;
@@ -866,6 +882,10 @@ function LocatedSheet({
 
   return (
     <div className="map-sheet">
+      {/* Reporting somewhere else usually starts with a name, not a drag —
+          search appears only in that flow, and only with a connection. */}
+      {thirdParty && online && <PlaceSearch onPick={onSearchPick} />}
+
       {!online && sketch !== null && sketch.shapes.length > 0 && (
         <div className="notice notice-offline">
           <strong>Your drawing stays on this phone.</strong>
@@ -974,6 +994,119 @@ function LocatedSheet({
       <button className="big-button" onClick={onShare} disabled={minting}>
         {minting ? 'Creating code…' : online ? 'Get my code' : 'Get my offline code'}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Place search for the report-somewhere-else flow, via OSM's Nominatim (the
+ * same ecosystem as the tiles; no key needed). Search fires ONLY on submit —
+ * never per keystroke — which keeps us far inside the public instance's
+ * usage policy. The typed query does leave the device, so this renders only
+ * when the caller is deliberately looking a place up, never for their own
+ * position.
+ */
+function PlaceSearch({
+  onPick,
+}: {
+  onPick: (lat: number, lon: number, accuracyM: number, label: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Array<{
+    lat: number;
+    lon: number;
+    accuracyM: number;
+    label: string;
+  }> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const run = async () => {
+    const q = query.trim();
+    if (q === '' || busy) return;
+    setBusy(true);
+    setFailed(false);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(q)}`,
+        { headers: { Accept: 'application/json' } },
+      );
+      if (!response.ok) throw new Error(String(response.status));
+      const data = (await response.json()) as Array<{
+        lat: string;
+        lon: string;
+        display_name: string;
+        boundingbox?: [string, string, string, string];
+      }>;
+      setResults(
+        data.map((place) => {
+          const lat = Number(place.lat);
+          const lon = Number(place.lon);
+          // Honest precision: half the result's bounding-box diagonal. A
+          // named building is tens of metres; a whole town caps at ±300m
+          // rather than pretending to a pin-point.
+          let accuracyM = 50;
+          if (place.boundingbox !== undefined) {
+            const [south, north, west, east] = place.boundingbox.map(Number) as [number, number, number, number];
+            const northM = (north - south) * 111_320;
+            const eastM = (east - west) * 111_320 * Math.cos((lat * Math.PI) / 180);
+            accuracyM = Math.round(Math.min(300, Math.max(10, Math.hypot(northM, eastM) / 2)));
+          }
+          return { lat, lon, accuracyM, label: place.display_name };
+        }),
+      );
+    } catch {
+      setFailed(true);
+      setResults(null);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="place-search">
+      <form
+        className="place-search-row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run();
+        }}
+      >
+        <input
+          className="note-input"
+          type="search"
+          placeholder="Search for a place or address"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <button type="submit" className="button button-primary" disabled={busy || query.trim() === ''}>
+          {busy ? 'Searching…' : 'Search'}
+        </button>
+      </form>
+
+      {failed && (
+        <p className="panel-hint">Search did not respond — you can still drag the pin instead.</p>
+      )}
+      {results !== null && results.length === 0 && (
+        <p className="panel-hint">Nothing found for that. Try adding a town, or drag the pin.</p>
+      )}
+      {results !== null && results.length > 0 && (
+        <div className="history-list place-results">
+          {results.map((place) => (
+            <button
+              key={`${place.lat},${place.lon}`}
+              type="button"
+              className="history-row"
+              onClick={() => {
+                setResults(null);
+                onPick(place.lat, place.lon, place.accuracyM, place.label);
+              }}
+            >
+              <strong>{place.label.split(',')[0]}</strong>
+              <span>{place.label.split(',').slice(1).join(',').trim()}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

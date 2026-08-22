@@ -1044,3 +1044,10 @@ body.map-first .header { display: none; }
 .map-sheet > .notice,
 .map-sheet > .accuracy-readout { flex-shrink: 0; }
 .sheet-panel .panel-hint { margin: -8px 0 0; }
+
+/* ---- Place search (report-somewhere-else flow) ------------------------- */
+.place-search { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.place-search-row { display: flex; gap: 8px; }
+.place-search-row .note-input { flex: 1; min-width: 0; }
+.place-search-row .button { flex: 0 0 auto; }
+.place-results { max-height: 32dvh; overflow-y: auto; }

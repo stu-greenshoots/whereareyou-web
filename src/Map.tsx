@@ -371,7 +371,15 @@ export function Map({
   // session that walks off the edge of the map is worse than useless.
   useEffect(() => {
     if (map === null || hidePin) return;
-    if (!map.getBounds().contains([lat, lon])) map.panTo([lat, lon]);
+    const target = L.latLng(lat, lon);
+    if (map.getBounds().contains(target)) return;
+    // A nearby drift pans smoothly; a far jump (a searched place two counties
+    // over) snaps, because animating across a country is nauseating.
+    if (map.getCenter().distanceTo(target) > 5000) {
+      map.setView(target, map.getZoom(), { animate: false });
+    } else {
+      map.panTo(target);
+    }
   }, [map, lat, lon, hidePin]);
 
   // Allow map clicks to reposition the pin when the map is editable.
