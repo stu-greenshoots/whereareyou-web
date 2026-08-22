@@ -51,6 +51,22 @@ function withShapeIfItFits(base: Sketch, shape: Sketch['shapes'][number]): Sketc
   return next;
 }
 
+/**
+ * The viewer's own position — neutral slate, and a DOT, not a pin. Blue and
+ * amber pins mean "the caller" and "a report"; the person merely looking at
+ * this map must never be mistakable for either.
+ */
+const VIEWER_COLOUR = '#475569';
+
+function viewerIcon(): L.DivIcon {
+  return L.divIcon({
+    className: 'viewer-dot-icon',
+    html: '<span class="viewer-dot"></span>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+}
+
 export interface MapProps {
   lat: number;
   lon: number;
@@ -88,12 +104,19 @@ export interface MapProps {
    */
   fitSketch?: boolean;
   /**
-   * Which toolbar chrome to show — the phone-trial switch (build plan D1).
-   * 'palette': every tool always visible, tools latch, explicit pan button.
-   * 'toggle': a single pencil that expands into the toolbar and closes back.
-   * The losing variant gets deleted after the trial.
+   * Adds an expand control (top-right, where the locate control would sit —
+   * do not combine with onLocate) that takes the map full screen. For the
+   * look-up side: its map is small, and the person who resolved a code is
+   * often trying to move toward it.
    */
-  toolbarVariant?: 'palette' | 'toggle';
+  allowFullscreen?: boolean;
+  /**
+   * Adds a control that finds the VIEWER's own position, marks it with a
+   * neutral dot, and recentres on it — so whoever looked the code up can see
+   * where they are relative to the caller. It NEVER moves the pin: the pin is
+   * the caller, and this button must not be able to lie about that.
+   */
+  showViewerLocation?: boolean;
   className?: string;
 }
 
@@ -111,7 +134,8 @@ export function Map({
   onSketchChange,
   sketchAnchor,
   fitSketch = false,
-  toolbarVariant = 'palette',
+  allowFullscreen = false,
+  showViewerLocation = false,
   className,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -152,6 +176,12 @@ export function Map({
   const anchorRef = useRef({ lat, lon });
   anchorRef.current = sketchAnchor ?? { lat, lon };
 
+  const [fullscreen, setFullscreen] = useState(false);
+  const [viewerBusy, setViewerBusy] = useState(false);
+  const [viewerNote, setViewerNote] = useState<string | null>(null);
+  const viewerMarkerRef = useRef<L.Marker | null>(null);
+  const viewerCircleRef = useRef<L.Circle | null>(null);
+
   useEffect(() => {
     if (containerRef.current === null) return;
 
@@ -182,6 +212,8 @@ export function Map({
       circleRef.current = null;
       trailRef.current = null;
       sketchHandleRef.current = null;
+      viewerMarkerRef.current = null;
+      viewerCircleRef.current = null;
       fittedSketchRef.current = false;
     };
     // Created once per mount; position changes are handled by the effect below.
@@ -265,6 +297,31 @@ export function Map({
     if (bounds === null) return;
     map.fitBounds(L.latLngBounds(bounds).extend([lat, lon]), { padding: [32, 32], maxZoom: 18 });
   }, [map, fitSketch, sketch, lat, lon]);
+
+  // Entering or leaving full screen resizes the container out from under
+  // Leaflet, which measures once. Re-measure after the new layout applies.
+  useEffect(() => {
+    if (map === null) return;
+    const measure = requestAnimationFrame(() => map.invalidateSize());
+    return () => cancelAnimationFrame(measure);
+  }, [map, fullscreen]);
+
+  // Escape leaves full screen; the collapse button is the touch peer.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
+
+  // The "could not locate you" note clears itself.
+  useEffect(() => {
+    if (viewerNote === null) return;
+    const timer = window.setTimeout(() => setViewerNote(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [viewerNote]);
 
   // Keep the view on the pin when the position changes underneath us — a live
   // session that walks off the edge of the map is worse than useless.
@@ -384,6 +441,48 @@ export function Map({
     };
   }, [map, activeTool, onSketchChange]);
 
+  // The viewer's own fix. One tap, one fix, recentre — deliberately simpler
+  // than the share screen's refining watch: this is orientation, not evidence,
+  // and it draws a dot rather than moving anything that matters.
+  const locateViewer = () => {
+    if (map === null) return;
+    if (!('geolocation' in navigator)) {
+      setViewerNote('This device cannot provide a location.');
+      return;
+    }
+    setViewerBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (fix) => {
+        setViewerBusy(false);
+        const at: [number, number] = [fix.coords.latitude, fix.coords.longitude];
+        if (viewerMarkerRef.current === null) {
+          viewerMarkerRef.current = L.marker(at, {
+            icon: viewerIcon(),
+            interactive: false,
+            keyboard: false,
+          }).addTo(map);
+          viewerCircleRef.current = L.circle(at, {
+            radius: fix.coords.accuracy,
+            color: VIEWER_COLOUR,
+            fillColor: VIEWER_COLOUR,
+            fillOpacity: 0.1,
+            weight: 1,
+          }).addTo(map);
+        } else {
+          viewerMarkerRef.current.setLatLng(at);
+          viewerCircleRef.current?.setLatLng(at);
+          viewerCircleRef.current?.setRadius(fix.coords.accuracy);
+        }
+        map.panTo(at);
+      },
+      () => {
+        setViewerBusy(false);
+        setViewerNote('Could not get your location. The pin is unaffected.');
+      },
+      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 15_000 },
+    );
+  };
+
   const shapeCount = sketch?.shapes.length ?? 0;
 
   const undoShape = () => {
@@ -395,9 +494,9 @@ export function Map({
   };
 
   const clearSketch = () => {
+    // The toolbar stays open and the tool stays in hand — clearing is
+    // "start the drawing over", not "stop drawing".
     setSketchFull(false);
-    setActiveTool('none');
-    if (toolbarVariant === 'toggle') setToolsOpen(false);
     onSketchChange?.(null);
   };
 
@@ -420,14 +519,12 @@ export function Map({
     </button>
   );
 
-  const toolbarOpen = toolbarVariant === 'palette' || toolsOpen;
-
   // Tiles are the one thing on this screen that genuinely needs the network.
   // Without a word of explanation an empty grey rectangle reads as "broken",
   // which is not what a person in trouble should be looking at — the position
   // itself is unaffected and is written out in full directly below.
   return (
-    <div className="map-frame">
+    <div className={`map-frame ${fullscreen ? 'map-frame-full' : ''}`}>
       <div ref={containerRef} className={className ?? 'map'} />
       {onLocate !== undefined && (
         <button
@@ -449,9 +546,43 @@ export function Map({
         </button>
       )}
 
+      {allowFullscreen && (
+        <button
+          type="button"
+          className="map-locate"
+          onClick={() => setFullscreen((current) => !current)}
+          aria-label={fullscreen ? 'Leave full screen' : 'Make the map full screen'}
+          title={fullscreen ? 'Leave full screen' : 'Full screen'}
+        >
+          {fullscreen ? <CollapseIcon /> : <ExpandIcon />}
+        </button>
+      )}
+
+      {showViewerLocation && (
+        <button
+          type="button"
+          className="map-locate map-viewer-locate"
+          onClick={locateViewer}
+          disabled={viewerBusy}
+          aria-label="Show where I am on the map"
+          title="Show where I am"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" className={viewerBusy ? 'locating' : ''}>
+            <circle cx="12" cy="12" r="4" fill="currentColor" />
+            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.6" />
+          </svg>
+        </button>
+      )}
+
+      {viewerNote !== null && <p className="map-viewer-note">{viewerNote}</p>}
+
       {onSketchChange !== undefined && (
         <div className={`map-tools ${offline ? 'map-tools-raised' : ''}`} role="toolbar" aria-label="Drawing tools">
-          {!toolbarOpen ? (
+          {!toolsOpen ? (
             <button
               type="button"
               className="map-tool"
@@ -466,31 +597,18 @@ export function Map({
             </button>
           ) : (
             <>
-              {toolbarVariant === 'toggle' ? (
-                <button
-                  type="button"
-                  className="map-tool"
-                  aria-label="Stop drawing"
-                  title="Stop drawing"
-                  onClick={() => {
-                    setToolsOpen(false);
-                    setActiveTool('none');
-                  }}
-                >
-                  <CloseIcon />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className={`map-tool ${activeTool === 'none' ? 'map-tool-active' : ''}`}
-                  aria-label="Move the map"
-                  aria-pressed={activeTool === 'none'}
-                  title="Move the map"
-                  onClick={() => setActiveTool('none')}
-                >
-                  <PanIcon />
-                </button>
-              )}
+              <button
+                type="button"
+                className="map-tool"
+                aria-label="Stop drawing"
+                title="Stop drawing"
+                onClick={() => {
+                  setToolsOpen(false);
+                  setActiveTool('none');
+                }}
+              >
+                <CloseIcon />
+              </button>
               {toolButton('pen', 'Draw freehand', <PenIcon />)}
               {toolButton('arrow', 'Draw an arrow', <ArrowIcon />)}
               {toolButton('circle', 'Draw a circle', <CircleIcon />)}
@@ -574,21 +692,27 @@ function CircleIcon() {
   );
 }
 
-function PanIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" strokeWidth="1.6" />
-      <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M12 3l-2.5 3h5Z M12 21l-2.5-3h5Z M3 12l3-2.5v5Z M21 12l-3-2.5v5Z" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
 function UndoIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M7 6L3.5 9.5 7 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M4 9.5h10a6 6 0 0 1 0 12h-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CollapseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

@@ -256,7 +256,14 @@ function OfflineView({ result, offline }: { result: OfflineResult; offline: bool
         </span>
       </div>
 
-      <Map lat={position.lat} lon={position.lon} accuracyM={position.cellSizeM} offline={offline} />
+      <Map
+        lat={position.lat}
+        lon={position.lon}
+        accuracyM={position.cellSizeM}
+        offline={offline}
+        allowFullscreen
+        showViewerLocation
+      />
 
       <section className="panel">
         <h2 className="panel-title">Location</h2>
@@ -315,6 +322,8 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         offline={offline}
         sketch={sketch}
         fitSketch
+        allowFullscreen
+        showViewerLocation
       />
 
       {sketch !== null && (

@@ -50,15 +50,6 @@ const DEMO_POSITION: Position = {
   takenAt: new Date().toISOString(),
 };
 
-/**
- * The drawing-toolbar chrome under trial (build plan D1): ?tools=toggle for
- * the collapsed pencil, anything else for the always-visible palette. A
- * dev-only switch — the losing variant and this param get deleted after the
- * phone trial.
- */
-const TOOLBAR_VARIANT: 'palette' | 'toggle' =
-  new URLSearchParams(window.location.search).get('tools') === 'toggle' ? 'toggle' : 'palette';
-
 /** A satellite-grade fix. Stop refining once we reach it. */
 const ACCURACY_GOOD_M = 20;
 /** Below this quality, prompt the sender to try for a better fix. */
@@ -412,7 +403,6 @@ export function Share() {
           locating={acquiring}
           sketch={sketch}
           onSketchChange={setSketch}
-          toolbarVariant={TOOLBAR_VARIANT}
           onMove={(lat, lon, accuracyM) => {
             // A hand-placed pin is a deliberate choice, not a sensor guess — so
             // its accuracy comes from how far the map is zoomed in, which the

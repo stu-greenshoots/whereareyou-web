@@ -733,3 +733,47 @@
   color: var(--text-dim);
 }
 .sketch-provenance strong { color: var(--text); }
+
+/* Full-screen map — the look-up map is small, and the person who resolved a
+   code is often trying to move toward it. */
+.map-frame.map-frame-full {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: var(--surface);
+}
+.map-frame-full .map {
+  height: 100%;
+  border-radius: 0;
+  border: none;
+}
+
+.map-viewer-locate { top: 58px; }
+
+/* Transient failure note for the viewer-locate control. */
+.map-viewer-note {
+  position: absolute;
+  right: 10px;
+  top: 106px;
+  z-index: 700;
+  margin: 0;
+  max-width: 220px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: 0 1px 6px #0003;
+}
+
+/* The viewer's own position: a neutral dot, deliberately not a pin. */
+.viewer-dot {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #475569;
+  border: 2.5px solid #fff;
+  box-shadow: 0 1px 4px #0006;
+}
