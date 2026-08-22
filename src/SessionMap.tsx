@@ -22,6 +22,12 @@ import type {
   Sketch,
   Zone,
 } from '@whereareyou/protocol';
+import {
+  Compass,
+  requestHeadingPermission,
+  type CompassTarget,
+  type HeadingPermission,
+} from './Compass.jsx';
 import { connectLive, newLiveId, type LiveHandle, type LiveHandlers, type LiveWelcome } from './live.js';
 import {
   Map,
@@ -175,6 +181,8 @@ export function SessionMap({
   const [panel, setPanel] = useState<'none' | 'chat' | 'activity' | 'people'>('none');
   /** Which participant's card is open. Their trail shows while it is. */
   const [card, setCard] = useState<string | null>(null);
+  /** The compass overlay, carrying the outcome of the iOS permission ask. */
+  const [compass, setCompass] = useState<'closed' | HeadingPermission>('closed');
   const [draft, setDraft] = useState('');
   const [unread, setUnread] = useState(0);
   /** participantId → stamp of their latest message, while its bubble shows. */
@@ -703,6 +711,54 @@ export function SessionMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [participants, selfId]);
 
+  // Everything the compass can point at: everyone else with a position, and
+  // every placed marker (theirs and mine). Never me — I am its centre.
+  const compassTargets = useMemo<CompassTarget[]>(() => {
+    const list: CompassTarget[] = [];
+    for (const entry of roster) {
+      if (entry.id === selfId) continue;
+      if (entry.position !== undefined) {
+        list.push({
+          kind: 'person',
+          id: entry.id,
+          label: displayName(entry.id),
+          avatar: entry.avatar ?? null,
+          owner: entry.owner,
+          position: { lat: entry.position.lat, lon: entry.position.lon },
+        });
+      }
+      for (const marker of markersOf(entry)) {
+        list.push({
+          kind: 'marker',
+          id: marker.id,
+          icon: marker.icon,
+          ...(marker.name !== undefined ? { name: marker.name } : {}),
+          position: { lat: marker.position.lat, lon: marker.position.lon },
+        });
+      }
+    }
+    for (const marker of myMarkers) {
+      list.push({
+        kind: 'marker',
+        id: marker.id,
+        icon: marker.icon,
+        ...(marker.name !== undefined ? { name: marker.name } : {}),
+        position: { lat: marker.position.lat, lon: marker.position.lon },
+      });
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [participants, selfId, myMarkers, displayName]);
+
+  // Where the compass starts measuring from: my own stream when I have one.
+  // A watcher has no stream — the overlay runs its own fix and says so.
+  const compassSelf =
+    myPosition !== null
+      ? { lat: myPosition.lat, lon: myPosition.lon }
+      : role === 'owner'
+        ? { lat: initialPosition.lat, lon: initialPosition.lon }
+        : null;
+
   const others = roster.filter((entry) => entry.id !== selfId).length;
   const remaining = expiresAt !== null ? timeRemaining(expiresAt) : null;
   const editingMarker = markerEdit !== null ? myMarkers.find((m) => m.id === markerEdit) : undefined;
@@ -821,6 +877,19 @@ export function SessionMap({
                 {/* Gated on the socket, not navigator.onLine: a room we can
                     reach is the only honest proof the subscribe can land. */}
                 {connected && ended === null && <NotifyControl code={code} variant="live" />}
+                <button
+                  type="button"
+                  className="button live-chat-button"
+                  aria-label="Compass — which way is everyone?"
+                  title="Compass"
+                  onClick={() => {
+                    // The iOS orientation permission only exists inside a
+                    // user gesture — ask here, then open with the answer.
+                    void requestHeadingPermission().then(setCompass);
+                  }}
+                >
+                  <CompassIcon />
+                </button>
                 <button
                   type="button"
                   className="button live-chat-button"
@@ -959,6 +1028,15 @@ export function SessionMap({
             </div>
           )}
         </div>
+      )}
+
+      {compass !== 'closed' && (
+        <Compass
+          targets={compassTargets}
+          initialSelf={compassSelf}
+          headingPermission={compass}
+          onClose={() => setCompass('closed')}
+        />
       )}
 
       {cardParticipant !== undefined && (
@@ -1125,6 +1203,15 @@ function ChatIcon() {
         strokeWidth="1.8"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function CompassIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M15.4 8.6 13.2 13.2 8.6 15.4l2.2-4.6Z" fill="currentColor" />
     </svg>
   );
 }

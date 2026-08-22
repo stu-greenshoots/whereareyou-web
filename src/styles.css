@@ -1751,3 +1751,163 @@ body.map-first .header { display: none; }
   color: var(--text);
   font-size: 13px;
 }
+
+/* ---- Compass view ------------------------------------------------------- */
+
+/* Full-screen, over the live map (which fixes itself at z-index 1200).
+   Token-driven, so it reads correctly on the light public surface, its dark
+   night mode, and the console alike. */
+.compass-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  color: var(--text);
+}
+
+.compass-head { display: flex; align-items: center; gap: 12px; }
+.compass-head .button { margin-left: auto; flex: 0 0 auto; }
+.compass-readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+.compass-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+/* The rose itself rotates against the heading; every label inside carries a
+   counter-rotation so type stays upright. No transition — the low-pass
+   filter is the smoothing, and a transition on top would only lag it. */
+.compass-rose {
+  position: relative;
+  width: min(88vw, 60vh, 460px);
+  aspect-ratio: 1;
+  border: 2px solid var(--rule);
+  border-radius: 50%;
+  background: var(--surface);
+  will-change: transform;
+}
+
+.compass-tick {
+  position: absolute;
+  left: calc(50% - 1px);
+  top: 0;
+  width: 2px;
+  height: 100%;
+  pointer-events: none;
+}
+.compass-tick::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 0;
+  width: 2px;
+  height: 10px;
+  background: var(--rule-soft);
+}
+.compass-tick-major::before { height: 16px; background: var(--text-dim); }
+
+.compass-cardinal {
+  position: absolute;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+.compass-cardinal-n { font-size: 17px; color: var(--text); }
+
+/* Me, always the centre — the same blue as my pin on the map. */
+.compass-self-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: var(--pin-self);
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1.5px #0f172a80;
+}
+
+/* A target: its dot/diamond, name, distance — stacked, upright, unclickable
+   (the map is where things are inspected; this view is for walking). */
+.compass-target {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+
+/* People reuse the map's colour grammar: slate for a joiner, blue for the
+   sharer. Fixed colours, like the pins — meaning must survive both themes. */
+.compass-person {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #475569;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  border: 2.5px solid #fff;
+  box-shadow: 0 0 0 1.5px #0f172a80, 0 2px 6px #0006;
+}
+.compass-person-owner { background: var(--pin-self); }
+.compass-person img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Placed markers keep their diamond silhouette and glyph from the map. */
+.compass-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 3px;
+  transform: rotate(45deg);
+  background: #334155;
+  border: 2px solid #fff;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1.5px #0f172a80, 0 2px 6px #0006;
+  color: #fff;
+}
+.compass-mark svg {
+  width: 11px;
+  height: 11px;
+  transform: rotate(-45deg);
+}
+
+.compass-target-name {
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text);
+}
+.compass-target-dist {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.compass-notes { display: flex; flex-direction: column; gap: 6px; min-height: 20px; }
+.compass-note { margin: 0; font-size: 13px; color: var(--text-dim); }
