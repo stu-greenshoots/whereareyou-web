@@ -458,6 +458,12 @@ export interface MapProps {
   pinAvatar?: string | null;
   /** Same, for the viewer-location dot. */
   viewerAvatar?: string | null;
+  /**
+   * Hands the parent the live Leaflet map (and null on teardown) — for
+   * surfaces that anchor their own overlays to map positions, like the
+   * participant popover. The parent must treat it as read-only.
+   */
+  onMapReady?: (map: L.Map | null) => void;
   className?: string;
 }
 
@@ -499,6 +505,7 @@ export function Map({
   selfPosition = null,
   pinAvatar = null,
   viewerAvatar = null,
+  onMapReady,
   className,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -564,6 +571,8 @@ export function Map({
   onPinTapRef.current = onPinTap;
   const onChatFlagTapRef = useRef(onChatFlagTap);
   onChatFlagTapRef.current = onChatFlagTap;
+  const onMapReadyRef = useRef(onMapReady);
+  onMapReadyRef.current = onMapReady;
 
   useEffect(() => {
     if (containerRef.current === null) return;
@@ -585,9 +594,11 @@ export function Map({
     const measure = requestAnimationFrame(() => instance.invalidateSize());
 
     setMap(instance);
+    onMapReadyRef.current?.(instance);
 
     return () => {
       cancelAnimationFrame(measure);
+      onMapReadyRef.current?.(null);
       instance.remove();
       setMap(null);
       // Drop the layer handles too. They belong to the map just destroyed, and

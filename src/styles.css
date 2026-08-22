@@ -1208,6 +1208,18 @@ body.map-first .header { display: none; }
 .icon-pick { display: flex; gap: 6px; flex-wrap: wrap; }
 .icon-pick .sheet-icon svg { width: 20px; height: 20px; }
 
+/* The share screen's place-a-spot panel: when height runs out, the ICON GRID
+   scrolls — the name field and the Remove/Done row must never leave the
+   screen, or "name it at placement" becomes "name it after a scroll". */
+.sheet-panel-marker { overflow-y: hidden; }
+.sheet-panel-marker .icon-pick {
+  overflow-y: auto;
+  min-height: 54px;
+  flex-shrink: 1;
+}
+.sheet-panel-marker .note-input,
+.sheet-panel-marker .marker-edit-row { flex-shrink: 0; }
+
 /* ---- Account: profile button, drawer, saved maps ----------------------
    The account is a convenience beside the share button, never in front of
    it: one small round control in the header, and a flat, ruled drawer.
@@ -1726,6 +1738,40 @@ body.map-first .header { display: none; }
   gap: 6px;
   border-top: 1px solid var(--rule-soft);
   padding-top: 8px;
+}
+
+/* The card as a POPOVER — anchored above the tapped pin or dot, caret
+   pointing down at it. Same surface and rules as the bottom card; only the
+   geometry changes. Positioned by SessionMap through the map projection, so
+   left/top land inline; it flips below the marker (pin-popover-below) when
+   the top of the map leaves no room. */
+.live-card.pin-popover {
+  position: absolute;
+  right: auto;
+  bottom: auto;
+  margin: 0;
+  width: min(340px, calc(100% - 16px));
+  max-width: none;
+  z-index: 1150;
+}
+.pin-popover-caret {
+  position: absolute;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  transform: rotate(45deg);
+  background: var(--surface);
+  border-right: 1px solid var(--rule-soft);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.pin-popover-below .pin-popover-caret {
+  bottom: auto;
+  top: -7px;
+  border-right: 0;
+  border-bottom: 0;
+  border-top: 1px solid var(--rule-soft);
+  border-left: 1px solid var(--rule-soft);
 }
 
 /* The marker edit sheet's action row. */

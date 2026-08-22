@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
+import { MAX_MARKER_NAME_CHARS, decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
 import type { CreateSessionResponse, MarkerIcon, Position, SessionMarker, SessionMode, Sketch } from '@whereareyou/protocol';
 import { extendSession, mintSession, revokeSession, upgradeToLive } from './api.js';
 import { useAccount } from './AccountContext.jsx';
@@ -7,7 +7,6 @@ import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { useSharedConnectivity } from './connectivity.js';
 import { Map, MarkerIconPicker } from './Map.jsx';
-import { OpenInMaps } from './OpenInMaps.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
 import { loadActiveShare, persistActiveShare, type ActiveShare } from './local-session.js';
@@ -967,6 +966,9 @@ export function Share() {
                       ...(current[0]?.name !== undefined ? { name: current[0].name } : {}),
                     },
                   ]);
+                  // Placing IS the moment to say what the spot is — the
+                  // icon-and-name step opens right away, one step, optional.
+                  setIconPickerOpen(true);
                 },
                 // A hand-placed pin is a deliberate choice, not a sensor
                 // guess — its accuracy comes from the zoom, which the Map
@@ -994,11 +996,31 @@ export function Share() {
                 position={phase.position}
                 marker={markers[0]?.position ?? null}
                 markerIcon={markers[0]?.icon ?? 'spot'}
+                markerName={markers[0]?.name ?? ''}
                 iconPickerOpen={iconPickerOpen}
                 onPickIcon={(icon) => {
+                  // Picking no longer closes the panel — the name field sits
+                  // beside the icons and Done commits the pair together.
                   setMarkers((current) =>
                     current.length > 0 ? [{ ...current[0]!, icon }, ...current.slice(1)] : current,
                   );
+                }}
+                onNameMarker={(value) => {
+                  setMarkers((current) => {
+                    if (current.length === 0) return current;
+                    const { name: _dropped, ...rest } = current[0]!;
+                    const sliced = value.slice(0, MAX_MARKER_NAME_CHARS);
+                    return [sliced === '' ? rest : { ...rest, name: sliced }, ...current.slice(1)];
+                  });
+                }}
+                onCloseIconPicker={() => {
+                  // Normalise the name on the way out, like the live room.
+                  setMarkers((current) => {
+                    if (current.length === 0) return current;
+                    const { name: _dropped, ...rest } = current[0]!;
+                    const trimmed = (current[0]!.name ?? '').trim();
+                    return [trimmed === '' ? rest : { ...rest, name: trimmed }, ...current.slice(1)];
+                  });
                   setIconPickerOpen(false);
                 }}
                 onRemoveMarker={() => {
@@ -1447,8 +1469,11 @@ function LocatedSheet({
   position,
   marker,
   markerIcon,
+  markerName,
   iconPickerOpen,
   onPickIcon,
+  onNameMarker,
+  onCloseIconPicker,
   onRemoveMarker,
   minting,
   acquiring,
@@ -1472,8 +1497,11 @@ function LocatedSheet({
   position: Position;
   marker: Position | null;
   markerIcon: MarkerIcon;
+  markerName: string;
   iconPickerOpen: boolean;
   onPickIcon: (icon: MarkerIcon) => void;
+  onNameMarker: (value: string) => void;
+  onCloseIconPicker: () => void;
   onRemoveMarker: () => void;
   minting: boolean;
   acquiring: boolean;
@@ -1519,17 +1547,31 @@ function LocatedSheet({
       )}
 
       {iconPickerOpen && marker !== null && (
-        <div className="sheet-panel">
+        <div className="sheet-panel sheet-panel-marker">
           <span className="panel-title">What is this spot?</span>
           <MarkerIconPicker current={markerIcon} onPick={onPickIcon} />
+          <input
+            className="note-input"
+            placeholder="Name this spot — the operator sees it"
+            maxLength={MAX_MARKER_NAME_CHARS}
+            value={markerName}
+            onChange={(event) => onNameMarker(event.target.value)}
+          />
+          <div className="row marker-edit-row">
+            <button type="button" className="button button-danger" onClick={onRemoveMarker}>
+              Remove
+            </button>
+            <button type="button" className="button button-primary" onClick={onCloseIconPicker}>
+              Done
+            </button>
+          </div>
         </div>
       )}
 
-      {marker !== null && (
+      {marker !== null && !iconPickerOpen && (
         <p className="marker-row">
-          A spot is marked. Tap the map to move it; tap the diamond to say what it is.
+          A spot is marked. Tap the map to move it; tap the diamond to name it.
           <span className="marker-row-actions">
-            <OpenInMaps lat={marker.lat} lon={marker.lon} label="Shared spot" />
             <button className="link-button" onClick={onRemoveMarker}>
               Remove it
             </button>

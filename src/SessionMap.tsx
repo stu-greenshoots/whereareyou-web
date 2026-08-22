@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import type { Map as LeafletMap } from 'leaflet';
 import {
   MAX_CHAT_HISTORY,
   MAX_CHAT_TEXT_CHARS,
@@ -219,8 +221,10 @@ export function SessionMap({
   const [myPosition, setMyPosition] = useState<Position | null>(null);
   /** The points I placed — claims about the world, never where I am. */
   const [myMarkers, setMyMarkers] = useState<SessionMarker[]>(initialMarkers);
-  /** Which of my markers has its edit sheet open. */
-  const [markerEdit, setMarkerEdit] = useState<string | null>(null);
+  /** Which of my markers has its edit sheet open, and how it opened —
+      `place` is the just-dropped naming step, `tap` is revisiting one that
+      already exists (the only time the sheet offers "Open in maps"). */
+  const [markerEdit, setMarkerEdit] = useState<{ id: string; via: 'place' | 'tap' } | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [events, setEvents] = useState<LiveEvent[]>([]);
@@ -230,8 +234,13 @@ export function SessionMap({
   const [panel, setPanel] = useState<'none' | 'chat' | 'activity' | 'people'>(
     initialPanel ?? 'none',
   );
-  /** Which participant's card is open. Their trail shows while it is. */
-  const [card, setCard] = useState<string | null>(null);
+  /** Which participant's card is open, and where from. Their trail shows
+      while it is. A card opened from a tapped pin or dot anchors to that
+      marker as a popover; one opened from the People roster keeps the
+      classic bottom-sheet presentation. */
+  const [card, setCard] = useState<{ id: string; via: 'map' | 'roster' } | null>(null);
+  /** The live Leaflet map — what the popover projects positions through. */
+  const [liveMap, setLiveMap] = useState<LeafletMap | null>(null);
   /** The compass overlay, carrying the outcome of the iOS permission ask. */
   const [compass, setCompass] = useState<'closed' | HeadingPermission>('closed');
   const [draft, setDraft] = useState('');
@@ -523,7 +532,7 @@ export function SessionMap({
         icon: 'spot',
       };
       commitMarkers([...current, marker]);
-      setMarkerEdit(marker.id);
+      setMarkerEdit({ id: marker.id, via: 'place' });
     },
     [commitMarkers],
   );
@@ -740,7 +749,7 @@ export function SessionMap({
         label: entry.name,
         avatar: entry.avatar,
         position: entry.position,
-        onTap: () => setCard(entry.id),
+        onTap: () => setCard({ id: entry.id, via: 'map' }),
       });
     }
     // A sharing joiner appears to themselves too — seeing your own dot is
@@ -754,7 +763,7 @@ export function SessionMap({
         position: myPosition,
         onTap: () => {
           const self = selfIdRef.current;
-          if (self !== null) setCard(self);
+          if (self !== null) setCard({ id: self, via: 'map' });
         },
       });
     }
@@ -784,7 +793,7 @@ export function SessionMap({
         name: marker.name,
         position: marker.position,
         icon: marker.icon,
-        onTap: () => setMarkerEdit(marker.id),
+        onTap: () => setMarkerEdit({ id: marker.id, via: 'tap' }),
       });
     }
     return points;
@@ -831,7 +840,7 @@ export function SessionMap({
 
   const focusTrail = useMemo(() => {
     if (card === null) return null;
-    const trail = participants[card]?.trail;
+    const trail = participants[card.id]?.trail;
     if (trail === undefined || trail.length < 2) return null;
     return trail.map((fix): [number, number] => [fix.lat, fix.lon]);
   }, [card, participants]);
@@ -897,8 +906,25 @@ export function SessionMap({
 
   const others = roster.filter((entry) => entry.id !== selfId).length;
   const remaining = expiresAt !== null ? timeRemaining(expiresAt) : null;
-  const editingMarker = markerEdit !== null ? myMarkers.find((m) => m.id === markerEdit) : undefined;
-  const cardParticipant = card !== null ? participants[card] : undefined;
+  const editingMarker = markerEdit !== null ? myMarkers.find((m) => m.id === markerEdit.id) : undefined;
+  const cardParticipant = card !== null ? participants[card.id] : undefined;
+
+  // Where a map-opened card anchors: the tapped marker's CURRENT position,
+  // so the popover follows a moving pin. The blue pin renders from `pin`
+  // (fresher than the roster frame for our own stream), everyone else from
+  // their latest fix. Null means nothing to anchor to — fall back to the
+  // classic bottom card rather than a popover floating on a guess.
+  const cardAnchor = useMemo(() => {
+    if (card === null || card.via !== 'map' || cardParticipant === undefined) return null;
+    const isPinPerson = role === 'owner' ? card.id === selfId : cardParticipant.owner;
+    if (isPinPerson) return { lat: pin.lat, lon: pin.lon };
+    if (card.id === selfId) {
+      return myPosition !== null ? { lat: myPosition.lat, lon: myPosition.lon } : null;
+    }
+    return cardParticipant.position !== undefined
+      ? { lat: cardParticipant.position.lat, lon: cardParticipant.position.lon }
+      : null;
+  }, [card, cardParticipant, role, selfId, pin.lat, pin.lon, myPosition]);
 
   return (
     <div className="share-stage">
@@ -919,7 +945,7 @@ export function SessionMap({
         focusTrail={focusTrail}
         onPinTap={() => {
           const target = role === 'owner' ? selfId : (owner?.id ?? null);
-          if (target !== null) setCard(target);
+          if (target !== null) setCard({ id: target, via: 'map' });
         }}
         onPlaceMarker={placeMarker}
         onZoneDraw={onZoneDraw}
@@ -935,6 +961,7 @@ export function SessionMap({
         showViewerLocation
         selfPosition={share ? (myPosition ?? (role === 'owner' ? initialPosition : null)) : null}
         viewerAvatar={avatar ?? null}
+        onMapReady={setLiveMap}
         fullscreenLocked
         className="map map-fill"
         fullscreenOverlay={
@@ -954,11 +981,16 @@ export function SessionMap({
                   onChange={(event) => renameMarkerLocal(editingMarker.id, event.target.value)}
                 />
                 <div className="row marker-edit-row">
-                  <OpenInMaps
-                    lat={editingMarker.position.lat}
-                    lon={editingMarker.position.lon}
-                    label={(editingMarker.name ?? '').trim() !== '' ? (editingMarker.name ?? '').trim() : 'Marked spot'}
-                  />
+                  {/* "Open in maps" belongs to revisiting a marker on the live
+                      map, not to the placement step — placement is about
+                      naming the spot, not leaving for another app. */}
+                  {markerEdit?.via === 'tap' && (
+                    <OpenInMaps
+                      lat={editingMarker.position.lat}
+                      lon={editingMarker.position.lon}
+                      label={(editingMarker.name ?? '').trim() !== '' ? (editingMarker.name ?? '').trim() : 'Marked spot'}
+                    />
+                  )}
                   <button type="button" className="button button-danger" onClick={() => removeMarker(editingMarker.id)}>
                     Remove
                   </button>
@@ -1155,7 +1187,7 @@ export function SessionMap({
                       key={entry.id}
                       type="button"
                       className="person-row"
-                      onClick={() => setCard(entry.id)}
+                      onClick={() => setCard({ id: entry.id, via: 'roster' })}
                     >
                       <Face name={entry.name ?? null} avatar={entry.avatar ?? null} />
                       <span className="person-name">
@@ -1185,60 +1217,189 @@ export function SessionMap({
         />
       )}
 
-      {cardParticipant !== undefined && (
-        <div className="live-card" role="dialog" aria-label="Participant">
-          <div className="live-card-head">
-            <Face name={cardParticipant.name ?? null} avatar={cardParticipant.avatar ?? null} />
-            <div className="live-card-title">
-              <strong>{displayName(cardParticipant.id)}</strong>
-              <span className="person-meta">
-                {cardParticipant.owner
-                  ? 'Sharing this session'
-                  : cardParticipant.position !== undefined
-                    ? 'In the session'
-                    : 'Watching'}
-              </span>
-            </div>
-            <button
-              type="button"
-              className="live-tab live-tab-close"
-              aria-label="Close"
-              onClick={() => setCard(null)}
-            >
-              ✕
-            </button>
-          </div>
-          <div className="live-card-facts">
-            {cardParticipant.joinedAt !== undefined && (
-              <span>Joined {timeAgo(cardParticipant.joinedAt)}</span>
-            )}
-            {cardParticipant.lastSeenAt !== undefined && (
-              <span>Last seen {timeAgo(cardParticipant.lastSeenAt)}</span>
-            )}
-            {cardParticipant.position !== undefined && (
-              <span>Latest fix ±{Math.round(cardParticipant.position.accuracyM)}m</span>
-            )}
-          </div>
-          {focusTrail !== null && (
-            <p className="live-card-trail">Their recent path is shown on the map while this is open.</p>
-          )}
-          {(() => {
-            const theirs = events.filter((event) => event.participantId === cardParticipant.id);
-            if (theirs.length === 0) return null;
-            return (
-              <div className="live-card-events">
-                {theirs.slice(-4).reverse().map((event, index) => (
-                  <p key={`${event.at}-${index}`} className="feed-row">
-                    <span className={`feed-kind feed-${event.kind}`} aria-hidden="true" />
-                    <span className="feed-text">{eventLine(event)}</span>
-                    <span className="feed-time">{timeAgo(event.at)}</span>
-                  </p>
-                ))}
+      {cardParticipant !== undefined &&
+        (() => {
+          const content = (
+            <>
+              <div className="live-card-head">
+                <Face name={cardParticipant.name ?? null} avatar={cardParticipant.avatar ?? null} />
+                <div className="live-card-title">
+                  <strong>{displayName(cardParticipant.id)}</strong>
+                  <span className="person-meta">
+                    {cardParticipant.owner
+                      ? 'Sharing this session'
+                      : cardParticipant.position !== undefined
+                        ? 'In the session'
+                        : 'Watching'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="live-tab live-tab-close"
+                  aria-label="Close"
+                  onClick={() => setCard(null)}
+                >
+                  ✕
+                </button>
               </div>
-            );
-          })()}
-        </div>
-      )}
+              <div className="live-card-facts">
+                {cardParticipant.joinedAt !== undefined && (
+                  <span>Joined {timeAgo(cardParticipant.joinedAt)}</span>
+                )}
+                {cardParticipant.lastSeenAt !== undefined && (
+                  <span>Last seen {timeAgo(cardParticipant.lastSeenAt)}</span>
+                )}
+                {cardParticipant.position !== undefined && (
+                  <span>Latest fix ±{Math.round(cardParticipant.position.accuracyM)}m</span>
+                )}
+              </div>
+              {focusTrail !== null && (
+                <p className="live-card-trail">Their recent path is shown on the map while this is open.</p>
+              )}
+              {(() => {
+                const theirs = events.filter((event) => event.participantId === cardParticipant.id);
+                if (theirs.length === 0) return null;
+                return (
+                  <div className="live-card-events">
+                    {theirs.slice(-4).reverse().map((event, index) => (
+                      <p key={`${event.at}-${index}`} className="feed-row">
+                        <span className={`feed-kind feed-${event.kind}`} aria-hidden="true" />
+                        <span className="feed-text">{eventLine(event)}</span>
+                        <span className="feed-time">{timeAgo(event.at)}</span>
+                      </p>
+                    ))}
+                  </div>
+                );
+              })()}
+            </>
+          );
+          // Tapped on the map, with a position to point at: a popover over
+          // that marker. From the roster (or with nothing to anchor to):
+          // the classic bottom card.
+          return cardAnchor !== null && liveMap !== null ? (
+            <PinPopover
+              map={liveMap}
+              lat={cardAnchor.lat}
+              lon={cardAnchor.lon}
+              onDismiss={() => setCard(null)}
+            >
+              {content}
+            </PinPopover>
+          ) : (
+            <div className="live-card" role="dialog" aria-label="Participant">
+              {content}
+            </div>
+          );
+        })()}
+    </div>
+  );
+}
+
+/** How far the popover clears the tapped icon: half the 26px pin ring plus
+    the caret's reach, so the caret tip sits just off the marker. */
+const POPOVER_GAP_PX = 22;
+/** Minimum air between the popover and the map's edges. */
+const POPOVER_MARGIN_PX = 8;
+/** The caret never slides past the popover's rounded corners. */
+const POPOVER_CARET_INSET_PX = 18;
+
+/**
+ * The participant card, anchored ABOVE a tapped map marker with a caret
+ * pointing down at it. Projected through the live Leaflet map, so it follows
+ * the marker through pans, zooms and live movement; flips below the marker
+ * only when the top of the map leaves no room, and clamps to the map's width
+ * on phones (the caret keeps pointing at the marker regardless).
+ */
+function PinPopover({
+  map,
+  lat,
+  lon,
+  onDismiss,
+  children,
+}: {
+  map: LeafletMap;
+  lat: number;
+  lon: number;
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<{
+    left: number;
+    top: number;
+    caretX: number;
+    below: boolean;
+  } | null>(null);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+
+  const place = useCallback(() => {
+    const box = boxRef.current;
+    if (box === null) return;
+    const point = map.latLngToContainerPoint([lat, lon]);
+    const size = map.getSize();
+    const width = box.offsetWidth;
+    const height = box.offsetHeight;
+    const left = Math.round(
+      Math.min(
+        Math.max(point.x - width / 2, POPOVER_MARGIN_PX),
+        Math.max(POPOVER_MARGIN_PX, size.x - width - POPOVER_MARGIN_PX),
+      ),
+    );
+    const caretX = Math.round(
+      Math.min(Math.max(point.x - left, POPOVER_CARET_INSET_PX), width - POPOVER_CARET_INSET_PX),
+    );
+    const below = point.y - height - POPOVER_GAP_PX < POPOVER_MARGIN_PX;
+    const top = Math.round(below ? point.y + POPOVER_GAP_PX : point.y - height - POPOVER_GAP_PX);
+    setLayout({ left, top, caretX, below });
+  }, [map, lat, lon]);
+
+  // First paint (and any content change) measures before showing; map
+  // movement re-projects continuously, so the card rides its marker.
+  useLayoutEffect(place, [place, children]);
+  useEffect(() => {
+    map.on('move zoom moveend zoomend', place);
+    window.addEventListener('resize', place);
+    return () => {
+      map.off('move zoom moveend zoomend', place);
+      window.removeEventListener('resize', place);
+    };
+  }, [map, place]);
+
+  // Tap-away dismisses — on click, not pointerdown, so panning the map under
+  // the popover doesn't kill it (a touch pan never becomes a click; the card
+  // just follows). Marker icons are exempt — their own tap decides what
+  // opens next (the same card, another participant's, a marker sheet).
+  useEffect(() => {
+    const onTapAway = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target === null) return;
+      if (boxRef.current?.contains(target) ?? false) return;
+      if (target.closest('.leaflet-marker-icon') !== null) return;
+      onDismissRef.current();
+    };
+    document.addEventListener('click', onTapAway, true);
+    return () => document.removeEventListener('click', onTapAway, true);
+  }, []);
+
+  return (
+    <div
+      ref={boxRef}
+      className={`live-card pin-popover ${layout?.below === true ? 'pin-popover-below' : ''}`}
+      role="dialog"
+      aria-label="Participant"
+      style={
+        layout === null
+          ? { visibility: 'hidden', left: 0, top: 0 }
+          : { left: layout.left, top: layout.top }
+      }
+    >
+      {children}
+      <span
+        className="pin-popover-caret"
+        aria-hidden="true"
+        style={{ left: layout?.caretX ?? 0 }}
+      />
     </div>
   );
 }
