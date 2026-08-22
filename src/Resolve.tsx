@@ -11,7 +11,7 @@ import { resolveSession, type ResolvedWithWarning } from './api.js';
 import { useAccount } from './AccountContext.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { SessionMap } from './SessionMap.jsx';
-import { useConnectivity } from './connectivity.js';
+import { useSharedConnectivity } from './connectivity.js';
 import { Map, escapeHtml } from './Map.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { CopyRow } from './CopyRow.jsx';
@@ -65,7 +65,7 @@ export function Resolve() {
   // Tiles are the only thing on this screen that needs the network. Without
   // this, a dispatcher offline sees an unexplained grey box where the map
   // should be — the Share screen already threads connectivity into its <Map>.
-  const { online } = useConnectivity();
+  const { online } = useSharedConnectivity();
 
   useEffect(() => inputRef.current?.focus(), []);
 
@@ -212,7 +212,21 @@ export function Resolve() {
           )}
         </div>
 
-        <button className="button" type="submit" disabled={busy || !ready}>
+        {/* Offline, a session look-up cannot succeed — say so instead of
+            offering it. Offline codes stay first-class: they resolve
+            entirely on this device. */}
+        {!online && (
+          <p className="offline-gate">
+            No connection — session codes need the resolver right now. Offline codes still
+            resolve on this device.
+          </p>
+        )}
+
+        <button
+          className="button"
+          type="submit"
+          disabled={busy || !ready || (!online && parsed.kind === 'session')}
+        >
           {busy ? 'Looking up…' : 'Look up'}
         </button>
       </form>

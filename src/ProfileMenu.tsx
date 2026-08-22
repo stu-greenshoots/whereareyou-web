@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccount } from './AccountContext.jsx';
+import { useSharedConnectivity } from './connectivity.js';
 import { fileToAvatar, type SavedMap } from './account.js';
 
 /**
@@ -91,6 +92,7 @@ function Drawer({
   onOpenSavedMap: (map: SavedMap) => void;
 }) {
   const { account, maps, deleteMap, rename, setAvatar, logout } = useAccount();
+  const { online } = useSharedConnectivity();
   const [nameDraft, setNameDraft] = useState(account.name);
   const [nameError, setNameError] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
@@ -225,7 +227,24 @@ function Drawer({
         {avatarError !== null && <p className="parse-bad">{avatarError}</p>}
       </section>
 
-      {account.kind === 'local' ? <SignInSection /> : <SignedInSection onLogout={logout} />}
+      {/* Credentials travel to the resolver, so offline they are withheld
+          rather than offered-and-failing. Everything local — saved maps,
+          name, photo — keeps working either way. */}
+      {account.kind === 'local' ? (
+        online ? (
+          <SignInSection />
+        ) : (
+          <section className="drawer-section">
+            <h2 className="panel-title">Account</h2>
+            <p className="offline-gate">
+              No connection — signing in needs the resolver. Your saved maps stay on this device
+              meanwhile.
+            </p>
+          </section>
+        )
+      ) : (
+        <SignedInSection onLogout={logout} online={online} />
+      )}
     </div>
   );
 }
@@ -319,7 +338,7 @@ function CredentialsForm({
   );
 }
 
-function SignedInSection({ onLogout }: { onLogout: () => Promise<void> }) {
+function SignedInSection({ onLogout, online }: { onLogout: () => Promise<void>; online: boolean }) {
   const { changePassword } = useAccount();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -342,6 +361,12 @@ function SignedInSection({ onLogout }: { onLogout: () => Promise<void> }) {
   return (
     <section className="drawer-section">
       <h2 className="panel-title">Account</h2>
+      {!online && (
+        <p className="offline-gate">
+          No connection — changing your password needs the resolver. Signing out still works.
+        </p>
+      )}
+      {online && (
       <details className="drawer-fold">
         <summary>Change password</summary>
         <form
@@ -379,6 +404,7 @@ function SignedInSection({ onLogout }: { onLogout: () => Promise<void> }) {
           </button>
         </form>
       </details>
+      )}
       <button type="button" className="button drawer-signout" onClick={() => void onLogout()}>
         Sign out
       </button>

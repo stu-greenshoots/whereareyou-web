@@ -5,7 +5,7 @@ import { extendSession, mintSession, revokeSession, upgradeToLive } from './api.
 import { useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
-import { useConnectivity } from './connectivity.js';
+import { useSharedConnectivity } from './connectivity.js';
 import { Map, MarkerIconPicker } from './Map.jsx';
 import { OpenInMaps } from './OpenInMaps.jsx';
 import { Brand } from './Brand.jsx';
@@ -285,7 +285,7 @@ export function Share() {
   const { account, openMapRequest, consumeOpenMapRequest, requestOpenMap } = useAccount();
   const [, forceTick] = useState(0);
   const watchRef = useRef<number | null>(null);
-  const { online, linkUp, reportReachable, reportUnreachable } = useConnectivity();
+  const { online, linkUp, reportReachable, reportUnreachable } = useSharedConnectivity();
 
   /** Set when the caller has declined the offer of an expiring code. */
   const [keepingOfflineCode, setKeepingOfflineCode] = useState(false);
@@ -1186,6 +1186,16 @@ export function Share() {
         </button>
       </div>
 
+      {/* Offline, the online-only controls below (extend, notifications,
+          the live map) are withheld rather than offered-and-failing; this
+          one quiet line stands in for all of them. */}
+      {!expired && !online && (
+        <p className="offline-gate">
+          Extending the code, notifications and the live map need a connection. They come back
+          when you do.
+        </p>
+      )}
+
       {/* Extending is the owner's call and needs the resolver; the server
           clamps cumulative lifetime at 24h and the countdown above renders
           whatever expiry it actually granted. */}
@@ -1209,7 +1219,7 @@ export function Share() {
         </div>
       )}
 
-      {!expired && (
+      {!expired && online && (
         <button
           className="button button-primary"
           onClick={() => {
@@ -1406,6 +1416,11 @@ function LocatedSheet({
       {/* Reporting somewhere else usually starts with a name, not a drag —
           search appears only in that flow, and only with a connection. */}
       {thirdParty && online && <PlaceSearch onPick={onSearchPick} />}
+      {thirdParty && !online && (
+        <p className="offline-gate">
+          Place search needs a connection — you can still drag the pin to the spot instead.
+        </p>
+      )}
 
       {!online && ((sketch !== null && sketch.shapes.length > 0) || marker !== null) && (
         <div className="notice notice-offline">

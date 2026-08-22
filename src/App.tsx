@@ -3,6 +3,7 @@ import { Share } from './Share.jsx';
 import { Resolve } from './Resolve.jsx';
 import { Brand } from './Brand.jsx';
 import { AccountProvider, useAccount } from './AccountContext.jsx';
+import { ConnectivityProvider } from './connectivity.js';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SessionMap } from './SessionMap.jsx';
 
@@ -29,7 +30,9 @@ function currentRoute(): Route {
 export function App() {
   return (
     <AccountProvider>
-      <AppShell />
+      <ConnectivityProvider>
+        <AppShell />
+      </ConnectivityProvider>
     </AccountProvider>
   );
 }

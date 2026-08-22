@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 import { probeResolver } from './api.js';
 
 /**
@@ -106,4 +114,25 @@ export function useConnectivity(): Connectivity {
   }, [verified]);
 
   return { online, linkUp, reportUnreachable, reportReachable };
+}
+
+const ConnectivityContext = createContext<Connectivity | null>(null);
+
+/**
+ * One probe loop for the whole app. Every screen reads the same belief —
+ * and evidence reported by one (a mint that failed for network reasons)
+ * immediately informs the rest.
+ */
+export function ConnectivityProvider({ children }: { children: ReactNode }) {
+  return createElement(ConnectivityContext.Provider, { value: useConnectivity() }, children);
+}
+
+export function useSharedConnectivity(): Connectivity {
+  const shared = useContext(ConnectivityContext);
+  if (shared === null) {
+    // A programming error, not a runtime condition: the app always mounts
+    // the provider at its root.
+    throw new Error('useSharedConnectivity outside ConnectivityProvider');
+  }
+  return shared;
 }

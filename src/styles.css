@@ -1736,3 +1736,18 @@ body.map-first .header { display: none; }
   font-size: 13px;
   color: var(--text-dim);
 }
+
+/* ---- Offline gating ----------------------------------------------------- */
+
+/* A withheld online-only affordance, explained in one quiet line. Indigo is
+   the offline hue everywhere in the system; the left rule marks it as an
+   annotation, not an alarm. */
+.offline-gate {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 4px solid var(--offline);
+  border-radius: var(--radius);
+  background: var(--offline-bg);
+  color: var(--text);
+  font-size: 13px;
+}
