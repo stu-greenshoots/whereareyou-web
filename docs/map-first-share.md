@@ -45,7 +45,7 @@ share if it was unnamed.
 
 | Key | What |
 |---|---|
-| `activeShare` | The one currently-running session — code, update token, expiry, mode, position, and the owner's encoded drawing — so a reload resumes ownership (and the drawing) via the start screen's chip. Cleared on revoke; ignored once expired. |
+| `activeShare` | The one currently-running session — code, update token, expiry, mode, position, the owner's encoded drawing and their marked spot + icon — so a reload resumes ownership (and everything drawn/marked) via the start screen's chip. Cleared on revoke; ignored once expired. |
 | `shareHistory` | Up to 8 past shares — position, name, note, encoded sketch, when. Tapping one re-enters the located screen preloaded; the caller still presses the button themselves. "Clear this list" sits beside it. |
 | `resolverKey` (sessionStorage) | The console's API key field. |
 
@@ -66,3 +66,17 @@ share if it was unnamed.
   claims the session under the shared demo key — intended for the
   send-to-a-friend case; a real control-room deployment would have its own
   keys and claim semantics anyway.
+
+
+## Live sessions (added 22 Aug, evening)
+
+A live session is a room. The design and deferred-security register live in
+`whereareyou-protocol/docs/specs/live-sessions-build-plan.md`; the shipped
+shape, briefly: join prompt on the one-tap link (share or just watch — the
+two buttons are the consent surface), one session-map screen for owner and
+joiners, slate initial-dots for people, initialled/iconed diamonds for
+marked spots, per-participant drawings, reconnection with replay, and the
+owner present in the room whenever their code screen is open (headless
+socket, which is also the single writer of owner state to the store). Marker
+moves in the room are tool-only; on the share screen a plain tap marks the
+spot — the pin is a person and taps never move people.

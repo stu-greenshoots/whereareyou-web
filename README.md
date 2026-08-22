@@ -45,8 +45,13 @@ rendering directly under each character. Supports reporting somewhere you are
 *not* standing (with place search), keeps a device-local history of past
 shares for one-tap reuse, and always offers the fallback formats: offline
 code, lat/lon, Plus Code, OS grid reference — folded away while online,
-forced open when the connection is gone. (A live keep-updating mode exists in
-the code but is benched: it has not been verified end to end.)
+forced open when the connection is gone. A session can be made **live**:
+anyone following the link is asked to join (share their position or just
+watch), everyone in the room sees everyone's pins, drawings and marked spots
+in real time over a WebSocket, and the owner is present in the room whenever
+their code screen is open. Marked spots are first-class: a tap marks a place
+you MEAN (a diamond with a chooseable icon — warning, flag, cross, car,
+house), distinct from where anyone IS.
 
 **Dispatcher console** — one input accepting either code type, routed by
 length; a shared link carries its code and resolves on arrival. Map with
