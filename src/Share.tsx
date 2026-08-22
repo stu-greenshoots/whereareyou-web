@@ -725,12 +725,16 @@ export function Share() {
     if (liveOpen) return;
     if (!('geolocation' in navigator)) return;
 
-    const trimmedName = shareName.trim();
+    // Same identity the live map presents (account name first, share name as
+    // fallback, the account photo) — otherwise the owner's pin drops its face
+    // and name on everyone's map whenever they sit on the code screen.
+    const trimmedName = account.name !== '' ? account.name : shareName.trim();
     const handle = connectLive({
       code: phase.session.code,
       updateToken: phase.session.updateToken,
       share: true,
       ...(trimmedName !== '' ? { name: trimmedName } : {}),
+      ...(account.avatar !== null ? { avatar: account.avatar } : {}),
       handlers: {
         onWelcome: () => {},
         onParticipant: () => {},

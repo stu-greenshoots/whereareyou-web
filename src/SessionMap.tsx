@@ -972,6 +972,7 @@ export function SessionMap({
               meta={metaRef.current}
               readOnly={!share}
               connected={connected && ended === null}
+              ended={ended !== null}
               draft={draft}
               setDraft={setDraft}
               onSubmit={submitChat}
@@ -1114,6 +1115,7 @@ function ChatTab({
   meta,
   readOnly,
   connected,
+  ended,
   draft,
   setDraft,
   onSubmit,
@@ -1125,6 +1127,8 @@ function ChatTab({
   meta: Record<string, { name: string | null; avatar: string | null; owner: boolean }>;
   readOnly: boolean;
   connected: boolean;
+  /** The room is over — "Reconnecting…" would be a lie in the composer. */
+  ended: boolean;
   draft: string;
   setDraft: (value: string) => void;
   onSubmit: (event: React.FormEvent) => void;
@@ -1173,7 +1177,7 @@ function ChatTab({
         <form className="chat-composer" onSubmit={onSubmit}>
           <input
             className="note-input"
-            placeholder={connected ? 'Message the session' : 'Reconnecting…'}
+            placeholder={ended ? 'The session has ended' : connected ? 'Message the session' : 'Reconnecting…'}
             maxLength={MAX_CHAT_TEXT_CHARS}
             value={draft}
             disabled={!connected}
