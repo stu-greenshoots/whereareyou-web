@@ -123,7 +123,18 @@ function AppShell() {
       </header>
 
       <main className="main">
-        {route === 'share' ? <Share /> : <Resolve />}
+        {route === 'share' ? (
+          <Share />
+        ) : (
+          <Resolve
+            onOpenSavedMap={(map) => {
+              // Same move as the header control: a saved map is material on
+              // the share screen, which consumes the request once mounted.
+              requestOpenMap(map);
+              navigate('share');
+            }}
+          />
+        )}
       </main>
 
       <footer className="footer">This is a tester page.</footer>

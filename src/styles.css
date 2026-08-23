@@ -548,6 +548,14 @@
 .fix-badge-third { background: var(--third-party); }
 .fix-expiry { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
+/* The marker-share caveat, folded into the fix panel: descriptive, quiet,
+   deliberately NOT a banner — the information matters, the alarm did not. */
+.fix-caveat {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
 .caller-note {
   margin: 13px 0 0;
   padding: 12px 14px;
@@ -1685,6 +1693,11 @@ body.map-first .header { display: none; }
   font-size: 12px;
   color: var(--text-dim);
 }
+/* A stream that has gone quiet: legible, never alarming — full text colour
+   is all the emphasis a stale row gets. Same treatment on the card's
+   last-seen fact. */
+.person-meta-stale { color: var(--text); }
+.fact-stale { color: var(--text); }
 
 /* Small round face for chat, people and cards. */
 .face-dot {

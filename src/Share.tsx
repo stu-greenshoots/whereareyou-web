@@ -16,6 +16,7 @@ import { connectLive, newLiveId } from './live.js';
 import { NotifyControl } from './Notify.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
+import { useWakeLock } from './wake-lock.js';
 
 /** Why we ended up handing out a permanent code instead of a session. */
 type OfflineCause =
@@ -283,6 +284,17 @@ export function Share() {
   // after child effects).
   const preMint = phase.name !== 'shared' && phase.name !== 'offline-shared';
   const mapFirst = preMint || liveOpen;
+
+  // A live share must not let the screen sleep out from under it — a locked
+  // phone stops producing fixes. Held here while the code screen's headless
+  // connection is the one streaming; the live map (SessionMap) holds its own
+  // while it is open. Quiet, feature-detected, failure accepted silently.
+  useWakeLock(
+    phase.name === 'shared' &&
+      mode === 'live' &&
+      !liveOpen &&
+      timeRemaining(phase.session.expiresAt) !== 'expired',
+  );
 
   useEffect(() => {
     document.body.classList.toggle('map-first', mapFirst);
@@ -840,23 +852,38 @@ export function Share() {
       }
     }
     if (markersRef.current.length > 0) handle.sendMarkers(markersRef.current);
+    const sendFix = (fix: GeolocationPosition): void => {
+      handle.sendPosition({
+        lat: fix.coords.latitude,
+        lon: fix.coords.longitude,
+        accuracyM: fix.coords.accuracy,
+        source: inferSource(fix.coords.accuracy),
+        takenAt: new Date(fix.timestamp).toISOString(),
+      });
+    };
     watchRef.current = navigator.geolocation.watchPosition(
-      (fix) => {
-        handle.sendPosition({
-          lat: fix.coords.latitude,
-          lon: fix.coords.longitude,
-          accuracyM: fix.coords.accuracy,
-          source: inferSource(fix.coords.accuracy),
-          takenAt: new Date(fix.timestamp).toISOString(),
-        });
-      },
+      sendFix,
       undefined,
       // Throttle by distance rather than time so a stationary phone stops
       // transmitting instead of burning battery repeating itself.
       { enableHighAccuracy: true, maximumAge: 10_000 },
     );
 
+    // Coming back to the foreground: one immediate fix, so the owner's pin
+    // catches up in a beat instead of waiting for the watch to wake. The
+    // socket's own reconnect+replay covers the connection side.
+    const onVisibility = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      navigator.geolocation.getCurrentPosition(sendFix, () => undefined, {
+        enableHighAccuracy: true,
+        maximumAge: 5_000,
+        timeout: 15_000,
+      });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
       if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
       watchRef.current = null;
       handle.close();
@@ -1366,7 +1393,7 @@ export function Share() {
           <strong>You already read out {formatOfflineCode(phase.spokenOfflineCode)}.</strong>
           <span>
             That one still works, and it still never expires — stopping the code above does not
-            take it back. Tell the operator to use the new code if you can.
+            take it back. If you can, ask them to use the new code instead.
           </span>
         </div>
       )}
@@ -1379,8 +1406,8 @@ export function Share() {
           <strong>You've lost your connection.</strong>
           <span>
             The code above still works — it was handed to the server before the signal went.
-            {mode === 'live' && ' Your position has stopped updating, though.'} If the operator
-            cannot find it, read out the offline code below instead: that one needs no network at
+            {mode === 'live' && ' Your position has stopped updating, though.'} If it cannot be
+            found, read out the offline code below instead: that one needs no network at
             either end.
           </span>
         </div>
@@ -1402,7 +1429,7 @@ export function Share() {
           <span>
             {mode === 'live'
               ? 'The marked spot stays where you put it. Your own position is now shared live alongside it.'
-              : 'The operator sees the named marker at that spot. Your own position is not shared.'}
+              : 'Whoever looks up the code sees the named marker at that spot. Your own position is not shared.'}
           </span>
         </div>
       )}
@@ -1715,7 +1742,7 @@ function LocatedSheet({
           <MarkerIconPicker current={markerIcon} onPick={onPickIcon} />
           <input
             className="note-input"
-            placeholder="Name this spot — the operator sees it"
+            placeholder="Name this spot — everyone sees it"
             maxLength={MAX_MARKER_NAME_CHARS}
             value={markerName}
             onChange={(event) => onNameMarker(event.target.value)}
@@ -1814,7 +1841,7 @@ function LocatedSheet({
 
           <input
             className="note-input"
-            placeholder="Note for the operator, e.g. third floor, back stairwell"
+            placeholder="Add a note, e.g. third floor, back stairwell"
             value={note}
             maxLength={280}
             onChange={(event) => setNote(event.target.value)}
@@ -1992,7 +2019,7 @@ function OfflineShared({
         <span>
           Your position is built into the code itself, which is what lets it work with no signal —
           at either end. It also means there is nothing to switch off: anyone who has these ten
-          characters can find this spot, indefinitely. Only give it to the operator.
+          characters can find this spot, indefinitely. Only give it to someone you trust.
         </span>
       </div>
 
@@ -2028,7 +2055,7 @@ function OfflineShared({
           </strong>
           <span>
             A session code expires after half an hour and you can stop it at any time. The offline
-            code above keeps working either way — if you have already read it out, the operator can
+            code above keeps working either way — anyone you have already given it to can
             still use it.
           </span>
           <div className="notice-actions">

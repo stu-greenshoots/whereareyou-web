@@ -9,6 +9,8 @@ import {
 } from '@whereareyou/protocol';
 import { resolveSession, type ResolvedWithWarning } from './api.js';
 import { useAccount } from './AccountContext.jsx';
+import type { SavedMap } from './account.js';
+import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
 import { loadActiveShare, loadJoinedIdentity, rememberJoinedIdentity } from './local-session.js';
@@ -24,7 +26,7 @@ const PARSE_HINTS: Record<string, string> = {
   unreadable: "That doesn't look like a code.",
   'too-short': 'Keep going — 8 characters for a live code, 10 for an offline one.',
   'too-long': 'That is too long. Live codes are 8 characters, offline codes 10.',
-  'bad-checksum': 'That code has a typo — check it with the caller.',
+  'bad-checksum': 'That code has a typo — check it with the person who sent it.',
 };
 
 interface HistoryEntry {
@@ -48,7 +50,7 @@ interface OfflineResult {
  */
 const DEMO_KEY = import.meta.env['VITE_DEMO_API_KEY'] ?? '';
 
-export function Resolve() {
+export function Resolve({ onOpenSavedMap }: { onOpenSavedMap: (map: SavedMap) => void }) {
   const [input, setInput] = useState('');
   const [apiKey, setApiKey] = useState(() => sessionStorage.getItem('resolverKey') ?? DEMO_KEY);
   const [session, setSession] = useState<ResolvedWithWarning | null>(null);
@@ -58,6 +60,9 @@ export function Resolve() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   /** Set when this device has joined the resolved session's live room. */
   const [live, setLive] = useState<{ share: boolean; name: string } | null>(null);
+  /** The join/watch choice made, while the what-should-we-call-you sheet is
+      up — the one step between choosing to enter and actually entering. */
+  const [pendingJoin, setPendingJoin] = useState<'share' | 'watch' | null>(null);
   /** Panel a push deep link asked for (#chat|#activity|#people) — consumed
       by the first session view this visit opens, then forgotten. */
   const [deepPanel, setDeepPanel] = useState<LivePanel | null>(() =>
@@ -111,6 +116,7 @@ export function Resolve() {
       if (candidate.kind === 'offline') {
         setSession(null);
         setLive(null);
+        setPendingJoin(null);
         setError(null);
         setOffline({ code: candidate.code, position: candidate.position });
         setHistory((previous) =>
@@ -141,6 +147,7 @@ export function Resolve() {
       setError(null);
       setOffline(null);
       setLive(null);
+      setPendingJoin(null);
       const result = await resolveSession(candidate.code, apiKey || undefined);
       setBusy(false);
 
@@ -189,6 +196,32 @@ export function Resolve() {
     sessionStorage.setItem('resolverKey', value);
   }, []);
 
+  /** Join or watch chosen — the name sheet is the one step before entering.
+      Pre-filled with whatever we already know: the name typed on an earlier
+      visit this session, or the account name. */
+  const openNameStep = useCallback(
+    (which: 'share' | 'watch') => {
+      setJoinName((current) => (current !== '' ? current : account.name));
+      setPendingJoin(which);
+    },
+    [account.name],
+  );
+
+  /** Actually enter the room, as the presented identity. An empty name is
+      the skip path — anonymous, exactly as before. Remembered per code so
+      re-entering resumes as the same person without asking again. */
+  const commitJoin = useCallback(
+    (share: boolean, rawName: string) => {
+      if (session === null) return;
+      const name = rawName.trim();
+      rememberJoinedIdentity(session.code, { share, name });
+      setJoinName(name);
+      setPendingJoin(null);
+      setLive({ share, name });
+    },
+    [session],
+  );
+
   // Joined: the room takes the whole screen until they leave. The live
   // session view is a PARTICIPANT surface — someone joining or watching a
   // shared map — so it reads light (Voyager), same as the owner's map
@@ -198,22 +231,33 @@ export function Resolve() {
   // read-only chat panel.
   if (session !== null && live !== null) {
     return (
-      <SessionMap
-        code={session.code}
-        displayCode={formatCode(session.code)}
-        role="joiner"
-        share={live.share}
-        {...(live.name !== '' ? { name: live.name } : {})}
-        {...(account.avatar !== null ? { avatar: account.avatar } : {})}
-        {...(deepPanel !== null ? { initialPanel: deepPanel } : {})}
-        initialPosition={session.position}
-        onLeave={() => {
-          setLive(null);
-          // The deep link is spent — leaving and re-entering by hand must
-          // not keep flinging the same panel open.
-          setDeepPanel(null);
-        }}
-      />
+      /* share-stage-account: the floating profile control below claims
+         top-right — the same placement discipline as the owner's live map —
+         and this class shifts the map's own locate control down a slot so
+         the two never overlap. The live bar and compass keep the bottom. */
+      <div className="share-stage share-stage-account">
+        <SessionMap
+          code={session.code}
+          displayCode={formatCode(session.code)}
+          role="joiner"
+          share={live.share}
+          {...(live.name !== '' ? { name: live.name } : {})}
+          {...(account.avatar !== null ? { avatar: account.avatar } : {})}
+          {...(deepPanel !== null ? { initialPanel: deepPanel } : {})}
+          initialPosition={session.position}
+          onLeave={() => {
+            setLive(null);
+            // The deep link is spent — leaving and re-entering by hand must
+            // not keep flinging the same panel open.
+            setDeepPanel(null);
+          }}
+        />
+        {/* The same floating account control every other map-first screen
+            gets — the header is gone while the room fills the screen. */}
+        <div className="profile-float">
+          <ProfileMenu onOpenSavedMap={onOpenSavedMap} />
+        </div>
+      </div>
     );
   }
 
@@ -272,45 +316,64 @@ export function Resolve() {
 
       {error !== null && <div className="notice notice-warn">{error}</div>}
 
-      {session !== null && session.mode === 'live' && (
+      {session !== null && session.mode === 'live' && pendingJoin === null && (
         <div className="notice notice-live join-prompt">
-          <strong>This is a live session — you can join it.</strong>
+          <strong>This is a live share — you can join it.</strong>
           <span>
-            Joining shares your position and your drawings with everyone in it, including the
-            caller, until you leave. Or just watch it move.
+            Joining shares your position and your drawings with everyone in it until you leave.
+            Or just watch it move.
           </span>
-          <input
-            className="note-input"
-            placeholder="Your name (optional)"
-            value={joinName}
-            maxLength={40}
-            onChange={(event) => setJoinName(event.target.value)}
-          />
           <div className="notice-actions">
-            <button
-              className="button button-primary"
-              onClick={() => {
-                // Remember the identity presented at hello, so re-entering
-                // this code resumes as the same person (self-rejoin guard).
-                const name = joinName.trim();
-                rememberJoinedIdentity(session.code, { share: true, name });
-                setLive({ share: true, name });
-              }}
-            >
+            <button className="button button-primary" onClick={() => openNameStep('share')}>
               Join and share my location
             </button>
-            <button
-              className="button"
-              onClick={() => {
-                const name = joinName.trim();
-                rememberJoinedIdentity(session.code, { share: false, name });
-                setLive({ share: false, name });
-              }}
-            >
+            <button className="button" onClick={() => openNameStep('watch')}>
               Just watch
             </button>
           </div>
         </div>
+      )}
+
+      {/* The one step between choosing to enter and entering: a name. The
+          identity presented at hello is what chat, the activity feed and the
+          joined announcement all show — asked once, remembered per code, and
+          always skippable (skip = anonymous, exactly as before). */}
+      {session !== null && session.mode === 'live' && pendingJoin !== null && (
+        <form
+          className="notice notice-live join-prompt"
+          onSubmit={(event) => {
+            event.preventDefault();
+            commitJoin(pendingJoin === 'share', joinName);
+          }}
+        >
+          <strong>What should we call you?</strong>
+          <span>
+            Your name sits beside your dot and your messages, so everyone knows who is who.
+          </span>
+          <input
+            className="note-input"
+            placeholder="Your name"
+            value={joinName}
+            maxLength={40}
+            // The sheet exists to take a name — focusing anything else first
+            // would just add a tap for the person it is asking.
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+            onChange={(event) => setJoinName(event.target.value)}
+          />
+          <div className="notice-actions">
+            <button className="button button-primary" type="submit">
+              {pendingJoin === 'share' ? 'Join' : 'Start watching'}
+            </button>
+            <button
+              className="button"
+              type="button"
+              onClick={() => commitJoin(pendingJoin === 'share', '')}
+            >
+              Skip — stay anonymous
+            </button>
+          </div>
+        </form>
       )}
 
       {session !== null && <SessionView session={session} offline={!online} />}
@@ -319,7 +382,7 @@ export function Resolve() {
 
       {history.length > 0 && (
         <section className="panel">
-          <h2 className="panel-title">This shift</h2>
+          <h2 className="panel-title">Recent look-ups</h2>
           <p className="panel-hint">
             Held in this browser tab only — never sent to or stored on the server.
           </p>
@@ -430,7 +493,7 @@ function OfflineView({ result, offline }: { result: OfflineResult; offline: bool
           <CopyRow label="OS grid reference" value={formats.osGridRef} />
         )}
         <CopyRow
-          label="Copy for CAD"
+          label="Full details"
           value={`${formats.latLon} (offline code ${formatOfflineCode(result.code)}, ±${cellSize}m)`}
         />
         <CopyRow label="Google Maps" value="Open in Google Maps" href={formats.googleMapsUrl} />
@@ -476,31 +539,6 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
 
   return (
     <>
-      {thirdParty && (
-        <div className="notice notice-thirdparty">
-          <strong>Reported location — not the caller's own position.</strong>
-          <span>
-            The caller told us about somewhere else. They are not necessarily here.
-            {markerName !== '' && <> They call the spot “{markerName}”.</>}
-          </span>
-        </div>
-      )}
-
-      {/* A live session carrying marked spots: the position is the caller
-          themselves, moving — the diamond is the place they reported, fixed.
-          Without this banner the two would be one ambiguous map. */}
-      {!thirdParty && session.mode === 'live' && markers.length > 0 && (
-        <div className="notice notice-thirdparty">
-          <strong>
-            The caller marked {markerName !== '' ? <>“{markerName}”</> : 'a spot'} — it is not
-            their own position.
-          </strong>
-          <span>
-            The diamond stays where they put it. The moving position is the caller themselves.
-          </span>
-        </div>
-      )}
-
       {session.warning !== undefined && (
         <div className="notice notice-warn">{session.warning}</div>
       )}
@@ -555,9 +593,20 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         })}
       />
 
-      {markers.length > 0 && (
+      {/* The diamonds are claims about the world, never a live fix — one
+          quiet line keeps the two apart without shouting about it. The
+          marker-share case gets its own line under the badge below. */}
+      {!thirdParty && markers.length > 0 && (
         <p className="sketch-provenance">
-          <strong>The caller marked {markers.length === 1 ? 'a spot' : `${markers.length} spots`}.</strong>{' '}
+          <strong>
+            They marked{' '}
+            {markers.length === 1
+              ? markerName !== ''
+                ? <>“{markerName}”</>
+                : 'a spot'
+              : `${markers.length} spots`}
+            .
+          </strong>{' '}
           {markers.length === 1 ? 'The diamond is' : 'The diamonds are'} somewhere they pointed
           out — not where they are.
         </p>
@@ -565,7 +614,7 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
 
       {sketch !== null && (
         <p className="sketch-provenance">
-          <strong>The caller drew this.</strong> It is their sketch of the scene, not survey
+          <strong>They drew this.</strong> It is their sketch of the scene, not survey
           data, and the colours carry no meaning.
         </p>
       )}
@@ -573,11 +622,20 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
       <section className="panel">
         <div className="fix-summary">
           <span className={`fix-badge ${thirdParty ? 'fix-badge-third' : ''}`}>
-            {thirdParty ? 'Reported' : "Caller's position"}
+            {thirdParty ? 'Marked spot' : session.mode === 'live' ? 'Live position' : 'Their position'}
           </span>
           <span>{describeSource(position.source, position.accuracyM)}</span>
           <span className="fix-expiry">Expires in {remaining}</span>
         </div>
+
+        {/* A marker-share's position IS the spot they pointed out. Said
+            once, plainly, where the position is read — not as a warning. */}
+        {thirdParty && (
+          <p className="fix-caveat">
+            Marked spot — not their live position.
+            {markerName !== '' && <> They call it “{markerName}”.</>}
+          </p>
+        )}
 
         {session.note !== undefined && session.note !== '' && (
           <p className="caller-note">“{session.note}”</p>
@@ -585,7 +643,7 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
 
         {session.mode === 'live' && (
           <p className="live-indicator">
-            <span className="live-dot" /> Live session — position may change
+            <span className="live-dot" /> They are sharing live — this position can update
           </p>
         )}
       </section>
@@ -597,7 +655,7 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         {formats.osGridRef !== null && (
           <CopyRow label="OS grid reference" value={formats.osGridRef} />
         )}
-        <CopyRow label="Copy for CAD" value={cadLine} />
+        <CopyRow label="Full details" value={cadLine} />
         <CopyRow label="Google Maps" value="Open in Google Maps" href={formats.googleMapsUrl} />
         <OpenInMaps lat={position.lat} lon={position.lon} label={formatCode(session.code)} />
       </section>

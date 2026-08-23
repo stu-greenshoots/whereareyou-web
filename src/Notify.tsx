@@ -72,7 +72,7 @@ export function NotifyControl({ code, variant }: { code: string; variant: 'docum
         {state === 'busy' && <p className="notify-note">Setting up notifications…</p>}
         {state === 'on' && (
           <p className="notify-note">
-            Notifications are on — this phone will hear when an operator views the code, someone
+            Notifications are on — this phone will hear when someone looks up the code, someone
             joins, or it is close to expiring.
           </p>
         )}

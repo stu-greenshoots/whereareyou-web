@@ -51,6 +51,7 @@ import { NotifyControl } from './Notify.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { inferSource, timeRemaining } from './formats.js';
+import { useResumeFix, useWakeLock } from './wake-lock.js';
 
 /**
  * The live room, as a screen. One component for both roles: the OWNER's map
@@ -118,6 +119,20 @@ function persistSentChatIds(code: string, ids: Set<string>): void {
   } catch {
     // Convenience only — the current connection still renders "You" by id.
   }
+}
+
+/**
+ * When a participant's stream counts as gone quiet. Phones drop fixes the
+ * moment they lock or background; after a minute of silence the dot on the
+ * map is a memory, not a position, and the room should be able to tell.
+ */
+const STALE_AFTER_MS = 60_000;
+
+/** Whether a last-seen stamp is old enough to say so out loud. */
+function isStale(lastSeenAt: string | undefined, now = Date.now()): boolean {
+  if (lastSeenAt === undefined) return false;
+  const age = now - Date.parse(lastSeenAt);
+  return Number.isFinite(age) && age > STALE_AFTER_MS;
 }
 
 /** Relative time for feeds and cards — deliberately coarse and calm. */
@@ -509,6 +524,27 @@ export function SessionMap({
     );
     return () => navigator.geolocation.clearWatch(watch);
   }, [share]);
+
+  // While we are the one streaming, the screen must not sleep out from under
+  // the share — a locked phone stops producing fixes. Quiet and best-effort.
+  useWakeLock(share && ended === null);
+
+  // Coming back to the foreground: push one fresh fix immediately, so the
+  // gap between "screen on" and "my dot moves" closes in a beat instead of
+  // waiting for the watch to wake up. The socket's own reconnect+replay
+  // handles the rest.
+  const pushResumeFix = useCallback((fix: GeolocationPosition) => {
+    const position: Position = {
+      lat: fix.coords.latitude,
+      lon: fix.coords.longitude,
+      accuracyM: fix.coords.accuracy,
+      source: inferSource(fix.coords.accuracy),
+      takenAt: new Date(fix.timestamp).toISOString(),
+    };
+    setMyPosition(position);
+    handleRef.current?.sendPosition(position);
+  }, []);
+  useResumeFix(share && ended === null, pushResumeFix);
 
   // The welcome roster is everyone ALREADY here — the server never includes
   // the joining connection itself — so without this, participants[selfId]
@@ -1287,26 +1323,37 @@ export function SessionMap({
               ) : (
                 [...roster]
                   .sort((a, b) => Number(b.owner) - Number(a.owner))
-                  .map((entry) => (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      className="person-row"
-                      onClick={() => setCard({ id: entry.id, via: 'roster' })}
-                    >
-                      <Face name={entry.name ?? null} avatar={entry.avatar ?? null} />
-                      <span className="person-name">
-                        {displayName(entry.id)}
-                        {entry.owner ? <span className="person-tag">sharer</span> : null}
-                        {entry.position === undefined && !entry.owner ? (
-                          <span className="person-tag person-tag-quiet">watching</span>
-                        ) : null}
-                      </span>
-                      <span className="person-meta">
-                        {entry.joinedAt !== undefined ? `joined ${timeAgo(entry.joinedAt)}` : ''}
-                      </span>
-                    </button>
-                  ))
+                  .map((entry) => {
+                    // A sharing participant whose stream has gone quiet: say
+                    // so instead of "joined" — the row's time should answer
+                    // "is this dot current?", not "how long have they been
+                    // here?". Calm wording, no alarm styling.
+                    const stale = entry.position !== undefined && isStale(entry.lastSeenAt);
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        className="person-row"
+                        onClick={() => setCard({ id: entry.id, via: 'roster' })}
+                      >
+                        <Face name={entry.name ?? null} avatar={entry.avatar ?? null} />
+                        <span className="person-name">
+                          {displayName(entry.id)}
+                          {entry.owner ? <span className="person-tag">sharer</span> : null}
+                          {entry.position === undefined && !entry.owner ? (
+                            <span className="person-tag person-tag-quiet">watching</span>
+                          ) : null}
+                        </span>
+                        <span className={`person-meta${stale ? ' person-meta-stale' : ''}`}>
+                          {stale && entry.lastSeenAt !== undefined
+                            ? `last seen ${timeAgo(entry.lastSeenAt)}`
+                            : entry.joinedAt !== undefined
+                              ? `joined ${timeAgo(entry.joinedAt)}`
+                              : ''}
+                        </span>
+                      </button>
+                    );
+                  })
               )}
             </div>
           )}
@@ -1324,6 +1371,7 @@ export function SessionMap({
 
       {cardParticipant !== undefined &&
         (() => {
+          const cardStale = cardParticipant.position !== undefined && isStale(cardParticipant.lastSeenAt);
           const content = (
             <>
               <div className="live-card-head">
@@ -1352,12 +1400,19 @@ export function SessionMap({
                   <span>Joined {timeAgo(cardParticipant.joinedAt)}</span>
                 )}
                 {cardParticipant.lastSeenAt !== undefined && (
-                  <span>Last seen {timeAgo(cardParticipant.lastSeenAt)}</span>
+                  <span className={cardStale ? 'fact-stale' : ''}>
+                    Last seen {timeAgo(cardParticipant.lastSeenAt)}
+                  </span>
                 )}
                 {cardParticipant.position !== undefined && (
                   <span>Latest fix ±{Math.round(cardParticipant.position.accuracyM)}m</span>
                 )}
               </div>
+              {cardStale && (
+                <p className="live-card-trail">
+                  Nothing heard for a little while — this may not be where they are right now.
+                </p>
+              )}
               {focusTrail !== null && (
                 <p className="live-card-trail">Their recent path is shown on the map while this is open.</p>
               )}
