@@ -1221,17 +1221,25 @@ body.map-first .header { display: none; }
 .icon-pick { display: flex; gap: 6px; flex-wrap: wrap; }
 .icon-pick .sheet-icon svg { width: 20px; height: 20px; }
 
-/* The share screen's place-a-spot panel: when height runs out, the ICON GRID
-   scrolls — the name field and the Remove/Done row must never leave the
-   screen, or "name it at placement" becomes "name it after a scroll". */
-.sheet-panel-marker { overflow-y: hidden; }
-.sheet-panel-marker .icon-pick {
-  overflow-y: auto;
-  min-height: 54px;
-  flex-shrink: 1;
+/* ---- Marker strip -------------------------------------------------------
+   The slim row that follows a placed point: icon chip, name, Done — one row
+   high, so placing is two taps and the map stays readable behind it. The
+   icon grid and the place search fold away, each expanding ABOVE the strip
+   when asked for (the grid collapses again on pick). The camera never moves
+   on placement — the off-screen edge pills cover anything out of view. */
+.marker-strip-sheet { padding: 8px 10px; gap: 10px; }
+.marker-strip { display: flex; align-items: center; gap: 6px; }
+.marker-strip .note-input { flex: 1; min-width: 0; padding: 11px 12px; }
+.marker-strip .sheet-icon { flex-shrink: 0; }
+.marker-strip-done { flex-shrink: 0; min-height: 44px; padding: 10px 16px; }
+.marker-strip-pop { display: flex; flex-direction: column; gap: 10px; }
+.marker-strip-pop-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
 }
-.sheet-panel-marker .note-input,
-.sheet-panel-marker .marker-edit-row { flex-shrink: 0; }
+.marker-strip-remove { color: var(--danger); }
 
 /* ---- Account: profile button, drawer, saved maps ----------------------
    The account is a convenience beside the share button, never in front of
@@ -1861,9 +1869,6 @@ body.map-first .header { display: none; }
   border-left: 1px solid var(--rule-soft);
 }
 
-/* The marker edit sheet's action row. */
-.marker-edit-row { align-items: center; }
-.marker-edit-row .open-in-maps { align-self: center; }
 
 /* ---- Notifications (web push) ------------------------------------------ */
 

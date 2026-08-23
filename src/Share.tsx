@@ -7,7 +7,8 @@ import { useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { useSharedConnectivity } from './connectivity.js';
-import { Map, MarkerIconPicker, centreOnPlacement, releaseFollow } from './Map.jsx';
+import { Map, releaseFollow } from './Map.jsx';
+import { MarkerStrip } from './MarkerStrip.jsx';
 import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
@@ -528,12 +529,14 @@ export function Share() {
   }, [stopAcquire]);
 
   /**
-   * A picked search result, from ANY of the located map's search fields (the
-   * report-elsewhere lead-in, the spot sheet, the armed point tool).
+   * A picked search result, from either of the located map's search fields
+   * (the report-elsewhere lead-in, the marker strip's search glyph).
    * Searching IS marking: the result lands as the named diamond (the place's
-   * name as the default, still editable), the what-is-this-spot sheet opens,
-   * and the view centres on it — a placement the camera ignores might as
-   * well not have happened.
+   * name as the default, still editable) and the strip opens on it. The
+   * camera does NOT move — the off-screen edge pills point at a marker that
+   * lands out of view, which is the whole reason they exist. Follow-mode
+   * still goes down: the placement is user intent, and the next fix must not
+   * snap the view back to self.
    */
   const searchPick = useCallback(
     (lat: number, lon: number, accuracyM: number, label: string) => {
@@ -558,7 +561,7 @@ export function Share() {
         },
       ]);
       setIconPickerOpen(true);
-      if (locatedMapRef.current !== null) centreOnPlacement(locatedMapRef.current, lat, lon, 16);
+      if (locatedMapRef.current !== null) releaseFollow(locatedMapRef.current);
       // In the report-elsewhere flow the code points AT the marker, so the
       // session position follows it — and the GNSS refinement stops so a
       // late fix cannot drag it back off the chosen spot. Sharing where YOU
@@ -1063,9 +1066,6 @@ export function Share() {
                 onLocate: relocate,
                 onSketchChange: setSketch,
                 markerOnClick: true,
-                // Arming the point tool leads with the same search every
-                // other placement path gets. The Map withholds it offline.
-                onMarkerSearchPick: searchPick,
                 onPlaceMarker: (lat: number, lon: number, accuracyM: number) => {
                   // A tap is "the spot I mean is HERE" — the pin is a person
                   // and taps never move people. Pre-mint the flow keeps ONE
@@ -1089,8 +1089,8 @@ export function Share() {
                   // In the report-elsewhere flow the code points AT the
                   // marker, so the session position follows it everywhere.
                   if (thirdParty) setPhase({ name: 'located', position: spot });
-                  // Placing IS the moment to say what the spot is — the
-                  // icon-and-name step opens right away, one step, optional.
+                  // Placing opens the slim marker strip — icon chip, name,
+                  // Done — with everything else folded away. Two taps total.
                   setIconPickerOpen(true);
                 },
                 // A hand-placed pin is a deliberate choice, not a sensor
@@ -1127,8 +1127,8 @@ export function Share() {
                 markerName={markers[0]?.name ?? ''}
                 iconPickerOpen={iconPickerOpen}
                 onPickIcon={(icon) => {
-                  // Picking no longer closes the panel — the name field sits
-                  // beside the icons and Done commits the pair together.
+                  // Picking collapses the grid but keeps the strip open —
+                  // the name field sits beside the chip and Done commits.
                   setMarkers((current) =>
                     current.length > 0 ? [{ ...current[0]!, icon }, ...current.slice(1)] : current,
                   );
@@ -1682,12 +1682,32 @@ function LocatedSheet({
   const formats = allFormats(position.lat, position.lon);
   const togglePanel = onTogglePanel;
 
+  // While a spot is being placed, the strip IS the sheet: one slim row over
+  // the map, everything else out of the way until Done. The mint button and
+  // the readout come straight back — in the report-elsewhere flow that is
+  // where "the code points here" appears once the spot exists.
+  if (iconPickerOpen && marker !== null) {
+    return (
+      <MarkerStrip
+        icon={markerIcon}
+        name={markerName}
+        onPickIcon={onPickIcon}
+        onNameChange={onNameMarker}
+        onDone={onCloseIconPicker}
+        onRemove={onRemoveMarker}
+        onSearchPick={online ? onSearchPick : undefined}
+        searchFailText="Search did not respond — you can still tap the map to move the spot."
+        searchEmptyText="Nothing found for that. Try adding a town, or tap the map."
+      />
+    );
+  }
+
   return (
     <div className="map-sheet">
       {/* Reporting somewhere else usually starts with a name, not a drag —
-          the search leads that flow (and only with a connection). It steps
-          aside while the spot sheet is open, which carries its own. */}
-      {thirdParty && online && !iconPickerOpen && (
+          the search leads that flow (and only with a connection). While a
+          spot is being placed the strip above carries its own search. */}
+      {thirdParty && online && (
         <PlaceSearch
           onPick={onSearchPick}
           failText="Search did not respond — you can still tap the map to mark the spot."
@@ -1726,39 +1746,7 @@ function LocatedSheet({
         </div>
       )}
 
-      {iconPickerOpen && marker !== null && (
-        <div className="sheet-panel sheet-panel-marker">
-          <span className="panel-title">What is this spot?</span>
-          {/* The sheet leads with search: a place can be named instead of
-              tapped, and a pick moves this spot there (pre-filling the name
-              below). Online only — offline the tap keeps working alone. */}
-          {online && (
-            <PlaceSearch
-              onPick={onSearchPick}
-              failText="Search did not respond — you can still tap the map to move the spot."
-              emptyText="Nothing found for that. Try adding a town, or tap the map."
-            />
-          )}
-          <MarkerIconPicker current={markerIcon} onPick={onPickIcon} />
-          <input
-            className="note-input"
-            placeholder="Name this spot — everyone sees it"
-            maxLength={MAX_MARKER_NAME_CHARS}
-            value={markerName}
-            onChange={(event) => onNameMarker(event.target.value)}
-          />
-          <div className="row marker-edit-row">
-            <button type="button" className="button button-danger" onClick={onRemoveMarker}>
-              Remove
-            </button>
-            <button type="button" className="button button-primary" onClick={onCloseIconPicker}>
-              Done
-            </button>
-          </div>
-        </div>
-      )}
-
-      {marker !== null && !iconPickerOpen && (
+      {marker !== null && (
         <p className="marker-row">
           {thirdParty
             ? 'Your code will point to this spot. Tap the map to move it; tap the diamond to name it.'
@@ -1773,7 +1761,7 @@ function LocatedSheet({
 
       {/* No marker yet in the report-elsewhere flow: the way forward is the
           whole message, because nothing can be shared until a spot exists. */}
-      {thirdParty && marker === null && !iconPickerOpen && (
+      {thirdParty && marker === null && (
         <p className="marker-row">Search for a place, or tap the map to mark the spot you mean.</p>
       )}
 

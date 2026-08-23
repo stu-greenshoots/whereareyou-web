@@ -11,7 +11,6 @@ import {
   sketchBounds,
 } from '@whereareyou/protocol';
 import type { MarkerIcon, Sketch, SketchColour } from '@whereareyou/protocol';
-import { PlaceSearch } from './PlaceSearch.jsx';
 import {
   attachOffscreenIndicators,
   type OffscreenIndicatorsHandle,
@@ -63,26 +62,25 @@ export function releaseFollow(map: L.Map): void {
 }
 
 /**
- * Centre the view on a point somebody DELIBERATELY placed — a tapped marker,
- * a picked search result. Never called mid-gesture — placement is a
- * committed act, which is exactly why it may move the camera when a drag or
- * a stroke must not.
+ * Centre the view on a point somebody deliberately chose. NO LONGER CALLED
+ * BY ANY PLACEMENT FLOW: placements stopped moving the camera (2026-08-23)
+ * once the off-screen edge pills guaranteed a marker out of view still shows
+ * itself — the recentre had become churn, not help, and made the place-a-spot
+ * moment hard to navigate. Kept because the machinery is right for any
+ * future deliberate-navigation move (the edge pills' tap-to-fly uses its own
+ * inline copy of the same discipline below).
  *
- * "Centre" means the middle of the map the person can SEE: placing a marker
- * opens the naming sheet over the bottom of the map, and a marker centred
- * underneath that sheet might as well be off-screen. So the work is deferred
- * a tick (letting the sheet the placement opens reach the DOM), the bottom
- * overlay stack is measured, and the point lands in the middle of what it
+ * "Centre" means the middle of the map the person can SEE: the bottom
+ * overlay stack is measured (after a deferred tick, letting any sheet the
+ * action opens reach the DOM) and the point lands in the middle of what it
  * leaves visible.
  *
  * Always a jump-cut, never a glide: event.latlng is unreliable while a pan
  * or zoom animation runs (the same reasoning as the first-fix jump below),
- * so an animated recentre would send the very next tap somewhere absurd —
- * and placements happen exactly when the next tap is likely.
+ * so an animated recentre would send the very next tap somewhere absurd.
  *
- * `minZoom` is for search picks: a result chosen from a list needs a
- * street-level view to mean anything, where a tap already happened at
- * whatever zoom the person chose and keeps it.
+ * `minZoom` is for picks from a list, which need a street-level view to mean
+ * anything; a tap already happened at whatever zoom the person chose.
  */
 export function centreOnPlacement(map: L.Map, lat: number, lon: number, minZoom = 0): void {
   setTimeout(() => {
@@ -497,16 +495,6 @@ export interface MapProps {
    */
   markerOnClick?: boolean;
   /**
-   * When set, arming the point tool leads with a place search: a sheet with
-   * a search field appears the moment the tool is picked up, so a marker can
-   * be placed by NAME before any tap. Picking a result puts the tool down
-   * and hands the place to the parent, which places (and centres on) the
-   * marker exactly as its own search flows do. Tapping the map still works
-   * unchanged. Withheld while `offline` — search cannot answer without a
-   * connection, and a field that cannot answer is worse than none.
-   */
-  onMarkerSearchPick?: (lat: number, lon: number, accuracyM: number, label: string) => void;
-  /**
    * Whether a plain click may move the PIN. Off wherever a click means
    * "mark a spot" instead — the pin is a person, and it stays one.
    */
@@ -543,8 +531,8 @@ export interface MapProps {
    *           NOT this viewer (a joiner arriving on the sharer's pin), so
    *           nothing moves the camera until the locate control engages it.
    *
-   * Any user pan or zoom, any placement (`centreOnPlacement`), and any sheet
-   * a parent announces via `releaseFollow` DISENGAGES it: fixes then update
+   * Any user pan or zoom, any placement, and any sheet a parent announces
+   * via `releaseFollow` DISENGAGES it: fixes then update
    * pins and accuracy rings only — the viewport never moves. The locate
    * control is the ONLY way back in (it recentres on self and re-engages),
    * and it wears an active state while following so the mode is visible.
@@ -603,7 +591,6 @@ export function Map({
   markersFull = false,
   onPlaceMarker,
   markerOnClick = false,
-  onMarkerSearchPick,
   moveOnClick = true,
   allowFullscreen = false,
   showViewerLocation = false,
@@ -697,8 +684,6 @@ export function Map({
   const focusTrailRef = useRef<L.Polyline | null>(null);
   const onPlaceMarkerRef = useRef(onPlaceMarker);
   onPlaceMarkerRef.current = onPlaceMarker;
-  const onMarkerSearchPickRef = useRef(onMarkerSearchPick);
-  onMarkerSearchPickRef.current = onMarkerSearchPick;
   const onZoneDrawRef = useRef(onZoneDraw);
   onZoneDrawRef.current = onZoneDraw;
   const onPinTapRef = useRef(onPinTap);
@@ -1218,9 +1203,11 @@ export function Map({
         event.latlng.lng,
         placementAccuracy(event.latlng.lat, map.getZoom()),
       );
-      // A placed point becomes the centre of attention — literally. The tap
-      // already happened at the person's chosen zoom, so this only pans.
-      centreOnPlacement(map, event.latlng.lat, event.latlng.lng);
+      // The camera does NOT move — the marker drops exactly where the finger
+      // is, and it is on screen by construction. But a placement is still
+      // user intent: follow-mode goes down so the next streaming fix cannot
+      // snap the view back to self and off the spot just placed.
+      releaseFollow(map);
       if (viaTool) setActiveTool('none');
     };
     map.on('click', handler);
@@ -1635,27 +1622,11 @@ export function Map({
       {viewerNote !== null && <p className="map-viewer-note">{viewerNote}</p>}
 
       <div className="map-bottom-stack">
-      {/* The point tool leads with search: the sheet appears the moment the
-          tool is armed, so placing a marker STARTS with a name when the
-          person has one — the tap stays available throughout. Picking a
-          result puts the tool down; the parent places and centres. */}
-      {activeTool === 'marker' && onMarkerSearchPick !== undefined && !offline && (
-        <div className="map-sheet map-sheet-marker-search">
-          <p className="panel-hint">Search for a place, or tap the map to place the point.</p>
-          <PlaceSearch
-            onPick={(lat, lon, accuracyM, label) => {
-              setActiveTool('none');
-              onMarkerSearchPickRef.current?.(lat, lon, accuracyM, label);
-            }}
-            failText="Search did not respond — you can still tap the map to place the point."
-            emptyText="Nothing found for that. Try adding a town, or tap the map."
-          />
-        </div>
-      )}
-      {activeTool === 'marker' && onMarkerSearchPick !== undefined && offline && (
-        <p className="offline-gate">
-          Place search needs a connection — tap the map to place the point instead.
-        </p>
+      {/* The armed point tool gets a one-line hint and nothing more — the
+          marker strip that follows the tap carries the icon grid and the
+          place search, folded away until asked for. */}
+      {activeTool === 'marker' && (
+        <p className="map-tools-note">Tap the map to place a point.</p>
       )}
       {sketchFull && (
         <p className="map-tools-note">

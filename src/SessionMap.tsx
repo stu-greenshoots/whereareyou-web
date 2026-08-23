@@ -33,11 +33,9 @@ import {
 } from './Compass.jsx';
 import { connectLive, newLiveId, type LiveHandle, type LiveHandlers, type LiveWelcome } from './live.js';
 import { useSharedConnectivity } from './connectivity.js';
-import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
+import { placeShortName } from './PlaceSearch.jsx';
 import {
   Map,
-  MarkerIconPicker,
-  centreOnPlacement,
   escapeHtml,
   isSafeAvatar,
   releaseFollow,
@@ -47,6 +45,7 @@ import {
   type PlacedMarker,
   type TileVariant,
 } from './Map.jsx';
+import { MarkerStrip } from './MarkerStrip.jsx';
 import { NotifyControl } from './Notify.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
@@ -595,29 +594,11 @@ export function SessionMap({
     [commitMarkers],
   );
 
-  /** A search pick while the point tool is up: the place lands as a NAMED
-      marker (the place's name as the default, still editable), the naming
-      sheet opens exactly as a tap's would, and the view centres on it. */
-  const placeMarkerFromSearch = useCallback(
-    (lat: number, lon: number, accuracyM: number, label: string) => {
-      const current = myMarkersRef.current;
-      if (current.length >= MAX_SESSION_MARKERS) return; // same belt as placeMarker
-      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
-      const marker: SessionMarker = {
-        id: newLiveId(),
-        position: { lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
-        icon: 'spot',
-        ...(placeName !== '' ? { name: placeName } : {}),
-      };
-      commitMarkers([...current, marker]);
-      setMarkerEdit({ id: marker.id, via: 'place' });
-      if (liveMap !== null) centreOnPlacement(liveMap, lat, lon, 16);
-    },
-    [commitMarkers, liveMap],
-  );
-
-  /** The edit sheet's search: move THIS marker to the picked place (naming
-      it after the place if it had no name), and centre the view there. */
+  /** The marker strip's search: move THIS marker to the picked place,
+      naming it after the place if it had no name. The camera stays put —
+      the off-screen edge pills point at a marker that lands out of view —
+      but follow still goes down, so a streaming fix cannot snap the view
+      back to self while the spot is being edited. */
   const moveMarkerToPlace = useCallback(
     (id: string, lat: number, lon: number, accuracyM: number, label: string) => {
       const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
@@ -643,7 +624,7 @@ export function SessionMap({
         };
       });
       commitMarkers(next);
-      if (liveMap !== null) centreOnPlacement(liveMap, lat, lon, 16);
+      if (liveMap !== null) releaseFollow(liveMap);
     },
     [commitMarkers, liveMap],
   );
@@ -1064,9 +1045,6 @@ export function SessionMap({
           if (target !== null) setCard({ id: target, via: 'map' });
         }}
         onPlaceMarker={placeMarker}
-        // Arming the point tool leads with a place search — online only,
-        // withheld quietly otherwise (the tap keeps working alone).
-        {...(online ? { onMarkerSearchPick: placeMarkerFromSearch } : {})}
         onZoneDraw={onZoneDraw}
         zonesFull={zonesFull}
         markersFull={myMarkers.length >= MAX_SESSION_MARKERS}
@@ -1096,50 +1074,38 @@ export function SessionMap({
         fullscreenOverlay={
           <>
             {editingMarker !== undefined && (
-              <div className="map-sheet">
-                <span className="panel-title">What is this spot?</span>
-                {/* The same search every placement flow leads with: a pick
-                    moves this marker to the place (naming it if unnamed)
-                    and centres the view there. Online only. */}
-                {online && (
-                  <PlaceSearch
-                    onPick={(lat, lon, accuracyM, label) =>
-                      moveMarkerToPlace(editingMarker.id, lat, lon, accuracyM, label)
-                    }
-                    failText="Search did not respond — the marker stays where you put it."
-                    emptyText="Nothing found for that. Try adding a town — the marker stays where you put it."
-                  />
-                )}
-                <MarkerIconPicker
-                  current={editingMarker.icon}
-                  onPick={(icon) => pickMarkerIcon(editingMarker.id, icon)}
-                />
-                <input
-                  className="note-input"
-                  placeholder="Name this spot — everyone sees it"
-                  maxLength={MAX_MARKER_NAME_CHARS}
-                  value={editingMarker.name ?? ''}
-                  onChange={(event) => renameMarkerLocal(editingMarker.id, event.target.value)}
-                />
-                <div className="row marker-edit-row">
-                  {/* "Open in maps" belongs to revisiting a marker on the live
-                      map, not to the placement step — placement is about
-                      naming the spot, not leaving for another app. */}
-                  {markerEdit?.via === 'tap' && (
+              <MarkerStrip
+                icon={editingMarker.icon}
+                name={editingMarker.name ?? ''}
+                onPickIcon={(icon) => pickMarkerIcon(editingMarker.id, icon)}
+                onNameChange={(value) => renameMarkerLocal(editingMarker.id, value)}
+                onDone={closeMarkerEdit}
+                onRemove={() => removeMarker(editingMarker.id)}
+                onSearchPick={
+                  online
+                    ? (lat, lon, accuracyM, label) =>
+                        moveMarkerToPlace(editingMarker.id, lat, lon, accuracyM, label)
+                    : undefined
+                }
+                searchFailText="Search did not respond — the marker stays where you put it."
+                searchEmptyText="Nothing found for that. Try adding a town — the marker stays where you put it."
+                // "Open in maps" belongs to revisiting a marker, not to the
+                // placement step — placement is about naming the spot, not
+                // leaving for another app.
+                extraAction={
+                  markerEdit?.via === 'tap' ? (
                     <OpenInMaps
                       lat={editingMarker.position.lat}
                       lon={editingMarker.position.lon}
-                      label={(editingMarker.name ?? '').trim() !== '' ? (editingMarker.name ?? '').trim() : 'Marked spot'}
+                      label={
+                        (editingMarker.name ?? '').trim() !== ''
+                          ? (editingMarker.name ?? '').trim()
+                          : 'Marked spot'
+                      }
                     />
-                  )}
-                  <button type="button" className="button button-danger" onClick={() => removeMarker(editingMarker.id)}>
-                    Remove
-                  </button>
-                  <button type="button" className="button button-primary" onClick={closeMarkerEdit}>
-                    Done
-                  </button>
-                </div>
-              </div>
+                  ) : undefined
+                }
+              />
             )}
             {zoneDraft !== null && (
               <div className="map-sheet">
