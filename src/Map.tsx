@@ -38,6 +38,26 @@ function placementAccuracy(lat: number, zoom: number): number {
 }
 
 /**
+ * Follow-mode plumbing. Surfaces that opt in (`followSelf`) register their
+ * disengage hook here, keyed by the live Leaflet map, so the two module-level
+ * camera movers — `centreOnPlacement` and `releaseFollow`, both called by
+ * parents holding only the raw map — can put follow down without threading
+ * React state across files. A map that never opted in simply has no entry.
+ */
+const followHooksByMap = new WeakMap<L.Map, { release: () => void }>();
+
+/**
+ * Put follow-mode down on this map: from here on, position fixes move the
+ * pins and rings but never the viewport, until the locate control re-engages
+ * it. For parents opening a sheet over the map (a marker's naming sheet, an
+ * icon picker) — anything mid-read that a snapping camera would ruin.
+ * A no-op on maps without follow-mode.
+ */
+export function releaseFollow(map: L.Map): void {
+  followHooksByMap.get(map)?.release();
+}
+
+/**
  * Centre the view on a point somebody DELIBERATELY placed — a tapped marker,
  * a picked search result. Never called mid-gesture — placement is a
  * committed act, which is exactly why it may move the camera when a drag or
@@ -75,6 +95,10 @@ export function centreOnPlacement(map: L.Map, lat: number, lon: number, minZoom 
       map.project(L.latLng(lat, lon), zoom).add(L.point(0, Math.round(offset))),
       zoom,
     );
+    // A placement takes the camera over: follow-mode goes down and STAYS
+    // down, so the next streaming fix cannot yank the view off the spot the
+    // person just placed — the locate control is the way back.
+    releaseFollow(map);
     map.setView(centre, zoom, { animate: false });
   }, 0);
 }
@@ -504,6 +528,28 @@ export interface MapProps {
    */
   selfPosition?: { lat: number; lon: number } | null;
   /**
+   * Follow-mode, for surfaces where streaming fixes move a SELF the camera
+   * could track (`selfPosition` when the surface streams one, otherwise the
+   * pin). Following is a per-map MODE, like every phone map app:
+   *
+   * `'on'`  — engaged from the start: the view opens centred on self, and
+   *           fixes keep it there (the owner's share and live maps).
+   * `'off'` — available but disengaged: the view opens on something that is
+   *           NOT this viewer (a joiner arriving on the sharer's pin), so
+   *           nothing moves the camera until the locate control engages it.
+   *
+   * Any user pan or zoom, any placement (`centreOnPlacement`), and any sheet
+   * a parent announces via `releaseFollow` DISENGAGES it: fixes then update
+   * pins and accuracy rings only — the viewport never moves. The locate
+   * control is the ONLY way back in (it recentres on self and re-engages),
+   * and it wears an active state while following so the mode is visible.
+   *
+   * Left unset, the map keeps the legacy framing — the pin is nudged back
+   * into view whenever an update walks it out — which is what the read-only
+   * console and watcher surfaces want.
+   */
+  followSelf?: 'on' | 'off';
+  /**
    * The account photo of whoever this map's PIN is — shown inside the pin
    * ring. The ring keeps its meaning-colour; the photo only adds a face.
    * Never set for third-party reports: the pin is not the sharer there.
@@ -557,6 +603,7 @@ export function Map({
   allowFullscreen = false,
   showViewerLocation = false,
   selfPosition = null,
+  followSelf,
   pinAvatar = null,
   viewerAvatar = null,
   onMapReady,
@@ -603,6 +650,31 @@ export function Map({
 
   const [fullscreen, setFullscreen] = useState(false);
   const hadPinRef = useRef(!hidePin);
+
+  // Follow-mode. The mode lives in state (the locate control renders its
+  // active face from it) with a ref mirror kept in step synchronously, so a
+  // fix landing between a gesture and the re-render can never sneak one last
+  // camera move in. `programmaticMovesRef` brackets our own setView/panTo
+  // calls — Leaflet fires the same movestart/zoomstart for those as for a
+  // finger, and only the finger may disengage.
+  const followAvailable = followSelf !== undefined;
+  const [following, setFollowing] = useState(followSelf === 'on');
+  const followingRef = useRef(following);
+  const programmaticMovesRef = useRef(0);
+  const setFollow = (on: boolean) => {
+    followingRef.current = on;
+    setFollowing(on);
+  };
+  /** Run one of our own camera moves without it reading as the user's. */
+  const moveCamera = (run: () => void) => {
+    programmaticMovesRef.current += 1;
+    try {
+      run();
+    } finally {
+      programmaticMovesRef.current -= 1;
+    }
+  };
+
   const [viewerBusy, setViewerBusy] = useState(false);
   const [viewerNote, setViewerNote] = useState<string | null>(null);
   const viewerMarkerRef = useRef<L.Marker | null>(null);
@@ -647,7 +719,7 @@ export function Map({
     // same frame — StrictMode's double mount, or a phase change landing on top
     // of one — otherwise leaves this callback to run against a removed map and
     // throw out of the animation frame.
-    const measure = requestAnimationFrame(() => instance.invalidateSize());
+    const measure = requestAnimationFrame(() => moveCamera(() => instance.invalidateSize()));
 
     setMap(instance);
     onMapReadyRef.current?.(instance);
@@ -676,6 +748,39 @@ export function Map({
     // Created once per mount; position changes are handled by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Follow-mode disengagement: the user taking hold of the camera puts the
+  // mode down. `dragstart` is only ever a finger; `zoomstart` and `movestart`
+  // fire for our own setView/panTo too, so both are gated on the bracket
+  // around every programmatic move (`movestart` is what catches keyboard
+  // pans and anything else Leaflet moves without a drag). Registering the
+  // release hook here is what lets `centreOnPlacement` and `releaseFollow`
+  // reach this map's mode from a parent holding only the Leaflet instance.
+  useEffect(() => {
+    if (map === null || !followAvailable) return;
+    followHooksByMap.set(map, { release: () => setFollow(false) });
+    const onUserMove = () => {
+      if (programmaticMovesRef.current === 0) setFollow(false);
+    };
+    map.on('dragstart', onUserMove);
+    map.on('zoomstart', onUserMove);
+    map.on('movestart', onUserMove);
+    return () => {
+      map.off('dragstart', onUserMove);
+      map.off('zoomstart', onUserMove);
+      map.off('movestart', onUserMove);
+      followHooksByMap.delete(map);
+    };
+    // setFollow only writes state; it cannot go stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, followAvailable]);
+
+  // The surface can change its stance (report-elsewhere drops the self pin
+  // entirely); follow stands down or re-arms with it.
+  useEffect(() => {
+    setFollow(followSelf === 'on');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followSelf]);
 
   // Sync marker, accuracy circle and trail to the current position.
   useEffect(() => {
@@ -1019,8 +1124,10 @@ export function Map({
   // Leaflet, which measures once. Re-measure after the new layout applies.
   useEffect(() => {
     if (map === null) return;
-    const measure = requestAnimationFrame(() => map.invalidateSize());
+    const measure = requestAnimationFrame(() => moveCamera(() => map.invalidateSize()));
     return () => cancelAnimationFrame(measure);
+    // moveCamera is a stable pass-through around a ref counter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, fullscreen]);
 
   // Full screen is a history entry, so the phone's Back button closes it —
@@ -1057,24 +1164,46 @@ export function Map({
     // animate: false is load-bearing — event.latlng is unreliable while a
     // zoom animation runs, so a tap in that window would place a marker
     // somewhere absurd. A jump-cut has no such window.
-    if (map !== null && !hidePin && !hadPinRef.current) map.setView([lat, lon], 17, { animate: false });
+    if (map !== null && !hidePin && !hadPinRef.current) {
+      // This is the view opening centred on self — the moment follow-mode
+      // engages, exactly as the locate control would (browsing the wide
+      // start map beforehand must not leave the located view unmoored).
+      if (followAvailable) setFollow(true);
+      moveCamera(() => map.setView([lat, lon], 17, { animate: false }));
+    }
     hadPinRef.current = !hidePin;
+    // setFollow/moveCamera only write refs and state; they cannot go stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, hidePin, lat, lon]);
 
-  // Keep the view on the pin when the position changes underneath us — a live
-  // session that walks off the edge of the map is worse than useless.
+  // Keep the view on the followed position when it changes underneath us — a
+  // live session that walks off the edge of the map is worse than useless.
+  // On follow-mode surfaces this IS the mode: while disengaged (a pan, a
+  // zoom, a placement, a sheet), fixes update the pin and its ring but the
+  // viewport never moves. Legacy surfaces (the console, a watcher) keep the
+  // always-on nudge. Never while a drawing tool is up — the same
+  // no-refit-mid-gesture rule the fit effect documents.
   useEffect(() => {
-    if (map === null || hidePin) return;
-    const target = L.latLng(lat, lon);
+    if (map === null) return;
+    if (followAvailable && !followingRef.current) return;
+    if (activeTool !== 'none') return;
+    const at = followAvailable && selfPosition !== null ? selfPosition : hidePin ? null : { lat, lon };
+    if (at === null) return;
+    const target = L.latLng(at.lat, at.lon);
     if (map.getBounds().contains(target)) return;
-    // A nearby drift pans smoothly; a far jump (a searched place two counties
-    // over) snaps, because animating across a country is nauseating.
-    if (map.getCenter().distanceTo(target) > 5000) {
-      map.setView(target, map.getZoom(), { animate: false });
-    } else {
-      map.panTo(target);
-    }
-  }, [map, lat, lon, hidePin]);
+    moveCamera(() => {
+      // A nearby drift pans smoothly; a far jump (a searched place two
+      // counties over) snaps, because animating across a country is
+      // nauseating.
+      if (map.getCenter().distanceTo(target) > 5000) {
+        map.setView(target, map.getZoom(), { animate: false });
+      } else {
+        map.panTo(target);
+      }
+    });
+    // moveCamera is a stable pass-through around a ref counter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, lat, lon, hidePin, selfPosition, following, followAvailable, activeTool]);
 
   // Allow map clicks to reposition the pin when the map is editable.
   useEffect(() => {
@@ -1159,6 +1288,9 @@ export function Map({
       // to be named. The circle's own radius is its extent; the accuracy is
       // how finely the centre could be pointed at this zoom.
       if (shape.kind === 'circle' && onZoneDrawRef.current !== undefined) {
+        // The naming sheet is about to open over this zone — follow goes
+        // down so a fix cannot drag the map out from under it.
+        setFollow(false);
         onZoneDrawRef.current(
           { lat: shape.centre.lat, lon: shape.centre.lon },
           shape.radiusM,
@@ -1200,15 +1332,44 @@ export function Map({
     };
   }, [map, activeTool, onSketchChange]);
 
+  // Snap the camera home to self — what both locate controls do when they
+  // re-engage follow-mode. Same near-pan/far-snap discipline as the follow
+  // effect, for the same nausea reason.
+  const returnToSelf = () => {
+    if (map === null) return;
+    const at = selfPosition ?? { lat, lon };
+    const target = L.latLng(at.lat, at.lon);
+    moveCamera(() => {
+      if (map.getCenter().distanceTo(target) > 5000) {
+        map.setView(target, map.getZoom(), { animate: false });
+      } else {
+        map.panTo(target);
+      }
+    });
+  };
+
+  // The pin-locate control. On follow surfaces it is also the ONE way back
+  // into follow-mode: recentre on self now, resume following, then let the
+  // parent refresh the fix.
+  const handleLocate = () => {
+    if (followAvailable) {
+      setFollow(true);
+      returnToSelf();
+    }
+    onLocate?.();
+  };
+
   // The viewer's own fix. One tap, one fix, recentre — deliberately simpler
   // than the share screen's refining watch: this is orientation, not evidence,
   // and it draws a dot rather than moving anything that matters.
   const locateViewer = () => {
     if (map === null) return;
     // A live surface already draws this viewer — recentring on that is the
-    // whole job, and cheaper and truer than a second one-shot fix.
+    // whole job, and cheaper and truer than a second one-shot fix. On follow
+    // surfaces it is also the re-engage gesture: snap home, follow again.
     if (selfPosition !== null) {
-      map.panTo([selfPosition.lat, selfPosition.lon]);
+      if (followAvailable) setFollow(true);
+      returnToSelf();
       return;
     }
     if (!('geolocation' in navigator)) {
@@ -1305,11 +1466,12 @@ export function Map({
       {onLocate !== undefined && (
         <button
           type="button"
-          className="map-locate"
-          onClick={onLocate}
+          className={`map-locate ${followAvailable && following ? 'map-locate-following' : ''}`}
+          onClick={handleLocate}
           disabled={locating}
           aria-label="Move the pin to my current location"
-          title="Pin my current location"
+          title={followAvailable && following ? 'Following your position' : 'Pin my current location'}
+          {...(followAvailable ? { 'aria-pressed': following } : {})}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true" className={locating ? 'locating' : ''}>
             <circle cx="12" cy="12" r="4" fill="currentColor" />
@@ -1343,11 +1505,12 @@ export function Map({
       {showViewerLocation && (
         <button
           type="button"
-          className={`map-locate ${slotClass(viewerSlot)}`}
+          className={`map-locate ${slotClass(viewerSlot)} ${followAvailable && following ? 'map-locate-following' : ''}`}
           onClick={locateViewer}
           disabled={viewerBusy}
           aria-label="Show where I am on the map"
-          title="Show where I am"
+          title={followAvailable && following ? 'Following your position' : 'Show where I am'}
+          {...(followAvailable ? { 'aria-pressed': following } : {})}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true" className={viewerBusy ? 'locating' : ''}>
             <circle cx="12" cy="12" r="4" fill="currentColor" />

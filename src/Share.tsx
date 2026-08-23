@@ -7,7 +7,7 @@ import { useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { useSharedConnectivity } from './connectivity.js';
-import { Map, MarkerIconPicker, centreOnPlacement } from './Map.jsx';
+import { Map, MarkerIconPicker, centreOnPlacement, releaseFollow } from './Map.jsx';
 import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
@@ -1006,6 +1006,11 @@ export function Share() {
           fullscreenLocked
           className="map map-fill"
           moveOnClick={false}
+          /* Follow-mode: sharing where YOU are opens centred on yourself, so
+             the map follows your fixes from the start — until a pan, zoom or
+             placement takes over. Report-elsewhere has no self pin to
+             follow, so it keeps the legacy framing. */
+          {...(!thirdParty ? { followSelf: 'on' as const } : {})}
           onMapReady={(instance) => {
             locatedMapRef.current = instance;
           }}
@@ -1017,7 +1022,12 @@ export function Share() {
                   name: m.name,
                   position: m.position,
                   icon: m.icon,
-                  onTap: () => setIconPickerOpen(true),
+                  onTap: () => {
+                    // The what-is-this-spot sheet opens over the marker —
+                    // follow goes down so a fix cannot drag the map off it.
+                    if (locatedMapRef.current !== null) releaseFollow(locatedMapRef.current);
+                    setIconPickerOpen(true);
+                  },
                 })),
               }
             : {})}

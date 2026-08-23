@@ -608,6 +608,11 @@
   box-shadow: 0 1px 6px #0003;
 }
 .map-locate:hover:not(:disabled) { background: var(--surface-2); }
+/* Follow-mode is a visible state: filled accent while the map is FOLLOWING
+   your position (the same active treatment as .map-tool-active), back to the
+   plain surface the moment a pan, zoom or placement puts follow down. */
+.map-locate-following { background: var(--accent); border-color: var(--accent); color: #fff; }
+.map-locate-following:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
 .map-locate:disabled { cursor: default; opacity: 0.7; }
 .map-locate svg { width: 22px; height: 22px; }
 .map-locate svg.locating { animation: locate-spin 1s linear infinite; }

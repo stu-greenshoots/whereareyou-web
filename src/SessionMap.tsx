@@ -40,6 +40,7 @@ import {
   centreOnPlacement,
   escapeHtml,
   isSafeAvatar,
+  releaseFollow,
   type MapChatFlag,
   type MapPeer,
   type MapZone,
@@ -867,12 +868,17 @@ export function SessionMap({
         name: marker.name,
         position: marker.position,
         icon: marker.icon,
-        onTap: () => setMarkerEdit({ id: marker.id, via: 'tap' }),
+        onTap: () => {
+          // The edit sheet opens over this marker — follow goes down so a
+          // fix cannot drag the map off the spot being edited.
+          if (liveMap !== null) releaseFollow(liveMap);
+          setMarkerEdit({ id: marker.id, via: 'tap' });
+        },
       });
     }
     return points;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participants, selfId, myMarkers, name]);
+  }, [participants, selfId, myMarkers, name, liveMap]);
 
   const mapZones = useMemo(() => {
     const list: MapZone[] = zones.map((zone) => {
@@ -1037,6 +1043,16 @@ export function SessionMap({
         // profile float shifts it down a slot via CSS.
         showViewerLocation
         selfPosition={share ? (myPosition ?? (role === 'owner' ? initialPosition : null)) : null}
+        /* Follow-mode: the owner's view opens centred on THEMSELVES, so it
+           follows from the start; a sharing joiner arrives on the sharer's
+           pin — not themselves — so follow waits for the locate control.
+           A watcher has no self on this map at all: they keep the legacy
+           keep-the-pin-in-view framing. */
+        {...(role === 'owner'
+          ? { followSelf: 'on' as const }
+          : share
+            ? { followSelf: 'off' as const }
+            : {})}
         viewerAvatar={avatar ?? null}
         onMapReady={setLiveMap}
         fullscreenLocked
