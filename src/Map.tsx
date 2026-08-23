@@ -12,6 +12,11 @@ import {
 } from '@whereareyou/protocol';
 import type { MarkerIcon, Sketch, SketchColour } from '@whereareyou/protocol';
 import { PlaceSearch } from './PlaceSearch.jsx';
+import {
+  attachOffscreenIndicators,
+  type OffscreenIndicatorsHandle,
+  type OffscreenTarget,
+} from './offscreen-indicators.js';
 import { SKETCH_INKS, attachSketch, type SketchHandle } from './sketch-layer.js';
 import {
   beginStroke,
@@ -686,6 +691,7 @@ export function Map({
   const placedLayersRef = useRef<Record<string, { marker: L.Marker; key: string; popup: string }>>({});
   const placedTapsRef = useRef<Record<string, (() => void) | undefined>>({});
   const zoneLayersRef = useRef<Record<string, { circle: L.Circle; chip: L.Marker; key: string }>>({});
+  const offscreenRef = useRef<OffscreenIndicatorsHandle | null>(null);
   const zoneRemovesRef = useRef<Record<string, (() => void) | undefined>>({});
   const chatFlagLayersRef = useRef<Record<string, L.Marker>>({});
   const focusTrailRef = useRef<L.Polyline | null>(null);
@@ -723,9 +729,21 @@ export function Map({
 
     setMap(instance);
     onMapReadyRef.current?.(instance);
+    // Dev builds only (dead-code-eliminated from production): the newest
+    // Leaflet map is reachable from the console — same idiom as SessionMap's
+    // __liveHandlers — so the camera can be driven and the view healed
+    // (invalidateSize) when exercising the UI headlessly. A hidden page gets
+    // no animation frames, so the re-measure above never runs there; this is
+    // the hook that let the off-screen indicators be verified regardless.
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>)['__devMap'] = instance;
+    }
 
     return () => {
       cancelAnimationFrame(measure);
+      if (import.meta.env.DEV) {
+        delete (window as unknown as Record<string, unknown>)['__devMap'];
+      }
       onMapReadyRef.current?.(null);
       instance.remove();
       setMap(null);
@@ -1069,6 +1087,97 @@ export function Map({
       }
     }
   }, [map, zones]);
+
+  // Off-screen indicators: markers and zones that pan or zoom out of the
+  // viewport get an edge pill pointing back at them. Markers and zones ONLY
+  // — never people, never the self pin (see offscreen-indicators.ts for the
+  // reasoning). Tapping one is deliberate navigation: follow-mode goes down
+  // exactly like a manual pan (via releaseFollow), and the move is a
+  // jump-cut, never a glide — event.latlng is unreliable mid-animation, and
+  // the next tap is likely. Deliberately NOT coupled to any placement
+  // behaviour: this is the indicators' own camera move.
+  useEffect(() => {
+    if (map === null) return;
+    // Centre the tapped object in the part of the map the person can SEE —
+    // the bottom overlay stack (toolbar, sheets, the live bar) covers the
+    // foot of the map, and a target centred underneath it might as well
+    // still be off-screen.
+    const centreOnTarget = (lat: number, lon: number) => {
+      const size = map.getSize();
+      const stack = map.getContainer().parentElement?.querySelector('.map-bottom-stack');
+      const covered = stack instanceof HTMLElement ? Math.min(stack.offsetHeight, size.y) : 0;
+      const zoom = map.getZoom();
+      const offset = Math.max(0, Math.min(covered / 2, size.y / 2 - 44));
+      const centre = map.unproject(
+        map.project(L.latLng(lat, lon), zoom).add(L.point(0, Math.round(offset))),
+        zoom,
+      );
+      releaseFollow(map);
+      map.setView(centre, zoom, { animate: false });
+    };
+    const handle = attachOffscreenIndicators(map, {
+      onTap: (target) => centreOnTarget(target.lat, target.lon),
+      onTapCluster: (list) => {
+        if (list.length === 0) return;
+        // Bringing a crowd into view is still deliberate navigation: follow
+        // goes down first, and the move is a jump-cut for the same
+        // tap-mid-animation reason as centreOnPlacement. Never zooms IN —
+        // the person chose their zoom; this only widens until the lot fits.
+        releaseFollow(map);
+        const bounds = L.latLngBounds(list.map((t) => [t.lat, t.lon] as [number, number]));
+        const stack = map.getContainer().parentElement?.querySelector('.map-bottom-stack');
+        const covered =
+          stack instanceof HTMLElement ? Math.min(stack.offsetHeight, map.getSize().y / 2) : 0;
+        map.fitBounds(bounds, {
+          paddingTopLeft: L.point(48, 48),
+          paddingBottomRight: L.point(48, 48 + covered),
+          maxZoom: map.getZoom(),
+          animate: false,
+        });
+      },
+    });
+    offscreenRef.current = handle;
+    return () => {
+      offscreenRef.current = null;
+      handle.remove();
+    };
+  }, [map]);
+
+  // Feed the indicators the current object list. The marker glyph reuses the
+  // diamond's own table (falling back to the placer's vetted initial, exactly
+  // like placedIcon); a zone is its dashed-circle motif, built in the module.
+  useEffect(() => {
+    const handle = offscreenRef.current;
+    if (handle === null) return;
+    const list: OffscreenTarget[] = [];
+    for (const placed of placedMarkers ?? []) {
+      let glyphHtml: string;
+      if (placed.icon !== undefined) {
+        glyphHtml = MARKER_GLYPHS[placed.icon] ?? MARKER_GLYPHS.spot;
+      } else {
+        const first = (placed.label ?? '').trim().charAt(0).toUpperCase();
+        glyphHtml = `<span>${/^[A-Z0-9]$/.test(first) ? first : '•'}</span>`;
+      }
+      list.push({
+        id: `marker:${placed.id}`,
+        kind: 'marker',
+        lat: placed.position.lat,
+        lon: placed.position.lon,
+        glyphHtml,
+        name: (placed.name ?? '').trim(),
+      });
+    }
+    for (const zone of zones ?? []) {
+      list.push({
+        id: `zone:${zone.id}`,
+        kind: 'zone',
+        lat: zone.center.lat,
+        lon: zone.center.lon,
+        name: zone.name.trim(),
+      });
+    }
+    handle.update(list);
+  }, [map, placedMarkers, zones]);
 
   // Sync the transient chat bubbles. Their lifetime belongs to the parent;
   // this effect only mirrors the list.
