@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Map as LeafletMap } from 'leaflet';
 import { MAX_MARKER_NAME_CHARS, decodeSketch, encodeOffline, encodeSketch, formatCode, formatOfflineCode, phoneticFor, toPhonetic } from '@whereareyou/protocol';
 import type { CreateSessionResponse, MarkerIcon, Position, SessionMarker, SessionMode, Sketch } from '@whereareyou/protocol';
 import { extendSession, mintSession, revokeSession, upgradeToLive } from './api.js';
@@ -262,6 +263,10 @@ export function Share() {
   const [stopFailure, setStopFailure] = useState<string | null>(null);
   /** A fix is being acquired/refined (initial locate, or the map's locate button). */
   const [acquiring, setAcquiring] = useState(false);
+  /** The located map's Leaflet instance, so a search pick in the
+      report-elsewhere flow can fly the view to the marker it just placed —
+      with the person-pin hidden there, nothing else moves the camera. */
+  const locatedMapRef = useRef<LeafletMap | null>(null);
   const acquireWatchRef = useRef<number | null>(null);
   const acquireTimerRef = useRef<number | null>(null);
   const bestAccuracyRef = useRef<number>(Infinity);
@@ -373,6 +378,7 @@ export function Share() {
       return; // Not ours any more — the ordinary start screen is the truth.
     }
     setMode(entry.mode);
+    setThirdParty(entry.thirdParty ?? false);
     setSketch(entry.sketch !== null ? decodeSketch(entry.sketch) : null);
     setMarkers(activeShareMarkers(entry));
     setOwnCodeNote(
@@ -591,14 +597,23 @@ export function Share() {
   );
 
   const mint = useCallback(
-    async (position: Position, spokenOfflineCode: string | null) => {
+    async (rawPosition: Position, spokenOfflineCode: string | null) => {
+      // A marker-share ("share a different location") points its code AT the
+      // marked spot: the session position IS the marker's coordinates, so an
+      // old console and the Location panel tell the same story the named
+      // diamond does. The flow keeps the two in step already; this is the
+      // invariant, enforced at the door.
+      const position =
+        thirdParty && markers[0] !== undefined ? markers[0].position : rawPosition;
+
       setPhase({ name: 'minting', position, spokenOfflineCode });
 
       // A live share moves the pin to wherever the caller really is. A pin
       // that was placed BY HAND is a claim about somewhere else, so it must
       // survive as its own marked spot — without this, the first live fix
       // replaces the one place the caller chose to share. Since live v2 that
-      // promoted pin is simply markers[0].
+      // promoted pin is simply markers[0]. (A marker-share never lands here:
+      // it cannot mint without a marker.)
       let mintMarkers = markers;
       if (mode === 'live' && markers.length === 0 && position.source === 'manual') {
         mintMarkers = [{ id: newLiveId(), position, icon: 'spot' }];
@@ -619,10 +634,14 @@ export function Share() {
       // `markers` is authoritative; the legacy single-marker mirror rides
       // beside it so a v1 server (which ignores unknown fields) still gets
       // the marked spot. A v2 server ignores the mirror, per the contract.
+      // Subject tells the console what `position` IS. Static marker-share:
+      // the reported spot — 'third-party'. But a LIVE mint starts streaming
+      // the sharer's own fix within seconds, so 'third-party' would mislabel
+      // it; the marker carries the reported place either way.
       const result = await mintSession({
         position,
         mode,
-        subject: thirdParty ? 'third-party' : 'self',
+        subject: thirdParty && mode !== 'live' ? 'third-party' : 'self',
         ttlSeconds: ttl,
         ...(note.trim() !== '' ? { note: note.trim() } : {}),
         ...(sketchPayload !== undefined ? { sketch: sketchPayload } : {}),
@@ -660,6 +679,7 @@ export function Share() {
         marker: mintMarkers[0]?.position ?? null,
         markerIcon: mintMarkers[0]?.icon ?? 'spot',
         markers: mintMarkers,
+        thirdParty,
       };
       setResumable(active);
       persistActiveShare(active);
@@ -712,16 +732,23 @@ export function Share() {
 
   const share = useCallback(() => {
     if (phase.name !== 'located') return;
+    // A marker-share without a marker has nothing to point a code at — the
+    // button is disabled in that state, and this is the backstop.
+    if (thirdParty && markers.length === 0) return;
     stopAcquire();
+
+    // In the report-elsewhere flow the marked spot IS the location the code
+    // hands over — including the offline code, which encodes it directly.
+    const target = thirdParty && markers[0] !== undefined ? markers[0].position : phase.position;
 
     // When the browser says the link is down it is telling the truth, and a
     // request that cannot succeed is not worth a frightened person's seconds.
     if (!linkUp) {
-      fallToOfflineCode(phase.position, 'no-link', null);
+      fallToOfflineCode(target, 'no-link', null);
       return;
     }
-    void mint(phase.position, null);
-  }, [phase, linkUp, mint, fallToOfflineCode, stopAcquire]);
+    void mint(target, null);
+  }, [phase, thirdParty, markers, linkUp, mint, fallToOfflineCode, stopAcquire]);
 
   // Live mode with the code screen up: the owner holds a HEADLESS room
   // connection — in the room, streaming, roster ignored — so anyone who has
@@ -920,7 +947,10 @@ export function Share() {
           lat={centre.lat}
           lon={centre.lon}
           accuracyM={located ? phase.position.accuracyM : 0}
-          hidePin={!located}
+          /* Reporting somewhere else places a NAMED MARKER, never a
+             person-style pin — there is no person to point at yet, and a pin
+             that looks like one would be a claim nobody made. */
+          hidePin={!located || thirdParty}
           initialZoom={located ? 17 : history.length > 0 ? 13 : 5}
           thirdParty={thirdParty}
           pinAvatar={thirdParty ? null : account.avatar}
@@ -930,6 +960,9 @@ export function Share() {
           fullscreenLocked
           className="map map-fill"
           moveOnClick={false}
+          onMapReady={(instance) => {
+            locatedMapRef.current = instance;
+          }}
           {...(located && markers.length > 0
             ? {
                 placedMarkers: markers.map((m) => ({
@@ -952,20 +985,24 @@ export function Share() {
                   // and taps never move people. Pre-mint the flow keeps ONE
                   // spot (a moved tap replaces it, keeping its id); a live
                   // room is where the list grows.
+                  const spot: Position = {
+                    lat,
+                    lon,
+                    accuracyM,
+                    source: 'manual',
+                    takenAt: new Date().toISOString(),
+                  };
                   setMarkers((current) => [
                     {
                       id: current[0]?.id ?? newLiveId(),
-                      position: {
-                        lat,
-                        lon,
-                        accuracyM,
-                        source: 'manual',
-                        takenAt: new Date().toISOString(),
-                      },
+                      position: spot,
                       icon: current[0]?.icon ?? 'spot',
                       ...(current[0]?.name !== undefined ? { name: current[0].name } : {}),
                     },
                   ]);
+                  // In the report-elsewhere flow the code points AT the
+                  // marker, so the session position follows it everywhere.
+                  if (thirdParty) setPhase({ name: 'located', position: spot });
                   // Placing IS the moment to say what the spot is — the
                   // icon-and-name step opens right away, one step, optional.
                   setIconPickerOpen(true);
@@ -973,21 +1010,26 @@ export function Share() {
                 // A hand-placed pin is a deliberate choice, not a sensor
                 // guess — its accuracy comes from the zoom, which the Map
                 // computes. Stop any GNSS refinement so it can't drag the
-                // pin back off the spot the caller just chose.
-                onMove: (lat: number, lon: number, accuracyM: number) => {
-                  stopAcquire();
-                  setPhase({
-                    name: 'located',
-                    position: {
-                      ...phase.position,
-                      lat,
-                      lon,
-                      accuracyM,
-                      source: 'manual',
-                      takenAt: new Date().toISOString(),
-                    },
-                  });
-                },
+                // pin back off the spot the caller just chose. No pin exists
+                // in the report-elsewhere flow, so no drag to accept there.
+                ...(!thirdParty
+                  ? {
+                      onMove: (lat: number, lon: number, accuracyM: number) => {
+                        stopAcquire();
+                        setPhase({
+                          name: 'located',
+                          position: {
+                            ...phase.position,
+                            lat,
+                            lon,
+                            accuracyM,
+                            source: 'manual',
+                            takenAt: new Date().toISOString(),
+                          },
+                        });
+                      },
+                    }
+                  : {}),
               }
             : {})}
           fullscreenOverlay={
@@ -1035,11 +1077,34 @@ export function Share() {
                 onSearchPick={(lat, lon, accuracyM, label) => {
                   stopAcquire();
                   // A picked place is a handy default name for the history.
-                  if (shareName.trim() === '') setShareName(label.split(',')[0] ?? '');
-                  setPhase({
-                    name: 'located',
-                    position: { lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
-                  });
+                  const placeName = label.split(',')[0]?.trim() ?? '';
+                  if (shareName.trim() === '') setShareName(placeName);
+                  const spot: Position = {
+                    lat,
+                    lon,
+                    accuracyM,
+                    source: 'manual',
+                    takenAt: new Date().toISOString(),
+                  };
+                  // Searching IS marking: the result lands as the named
+                  // diamond (the place's name as the default, still
+                  // editable), the what-is-this-spot sheet opens, and the
+                  // view flies there — the hidden person-pin no longer
+                  // drives the camera. Search renders only in the
+                  // report-elsewhere flow, so this is that flow.
+                  setMarkers((current) => [
+                    {
+                      id: current[0]?.id ?? newLiveId(),
+                      position: spot,
+                      icon: current[0]?.icon ?? 'spot',
+                      ...((current[0]?.name ?? placeName) !== ''
+                        ? { name: current[0]?.name ?? placeName }
+                        : {}),
+                    },
+                  ]);
+                  setIconPickerOpen(true);
+                  locatedMapRef.current?.setView([lat, lon], 17, { animate: false });
+                  setPhase({ name: 'located', position: spot });
                 }}
                 note={note}
                 setNote={setNote}
@@ -1076,6 +1141,7 @@ export function Share() {
                       className="button button-primary resume-chip"
                       onClick={() => {
                         setMode(resumable.mode);
+                        setThirdParty(resumable.thirdParty ?? false);
                         setSketch(resumable.sketch !== null ? decodeSketch(resumable.sketch) : null);
                         setMarkers(activeShareMarkers(resumable));
                         setPhase({
@@ -1212,7 +1278,16 @@ export function Share() {
     void (async () => {
       setLiveError(null);
       if (mode !== 'live') {
-        const result = await upgradeToLive(session.code, session.updateToken);
+        // Going live starts streaming the sharer's OWN position, so a
+        // third-party marker-share flips its stored subject to 'self' on the
+        // same request — the marker keeps carrying the reported spot, and
+        // the console's REPORTED banner stops mislabelling the caller's own
+        // moving fix. The server accepts the flip only with this upgrade.
+        const result = await upgradeToLive(
+          session.code,
+          session.updateToken,
+          thirdParty ? { subject: 'self' } : {},
+        );
         if (!result.ok) {
           setLiveError(result.message);
           return;
@@ -1283,6 +1358,27 @@ export function Share() {
         </div>
       )}
 
+      {/* A marker-share's code points at the SPOT, not at the sharer — the
+          screen says so in the marker's own name, so reading the code down
+          the phone and watching the operator go somewhere else can't
+          surprise anyone. */}
+      {thirdParty && !expired && (
+        <div className="notice notice-thirdparty">
+          <strong>
+            This code marks{' '}
+            {(markers[0]?.name ?? '').trim() !== ''
+              ? <>“{markers[0]!.name!.trim()}”</>
+              : 'the spot on the map'}{' '}
+            — not where you are.
+          </strong>
+          <span>
+            {mode === 'live'
+              ? 'The marked spot stays where you put it. Your own position is now shared live alongside it.'
+              : 'The operator sees the named marker at that spot. Your own position is not shared.'}
+          </span>
+        </div>
+      )}
+
       {mode === 'live' && !expired && online && (
         <div className="notice notice-live">
           <span className="live-dot" /> Your position is being shared live
@@ -1300,6 +1396,11 @@ export function Share() {
             lon={position.lon}
             accuracyM={position.accuracyM}
             thirdParty={thirdParty}
+            /* A marker-share preview shows the named diamond, never a
+               person-style pin — the position IS the marker, and two symbols
+               on one spot would invite exactly the confusion the model
+               removes. */
+            hidePin={thirdParty}
             pinAvatar={thirdParty ? null : account.avatar}
             offline={!online}
             sketch={sketch}
@@ -1338,6 +1439,7 @@ export function Share() {
           lon={position.lon}
           accuracyM={position.accuracyM}
           thirdParty={thirdParty}
+          hidePin={thirdParty}
           pinAvatar={thirdParty ? null : account.avatar}
           offline={!online}
           sketch={sketch}
@@ -1532,17 +1634,33 @@ function LocatedSheet({
       {thirdParty && online && <PlaceSearch onPick={onSearchPick} />}
       {thirdParty && !online && (
         <p className="offline-gate">
-          Place search needs a connection — you can still drag the pin to the spot instead.
+          Place search needs a connection — you can still tap the map to mark the spot instead.
         </p>
       )}
 
       {!online && ((sketch !== null && sketch.shapes.length > 0) || marker !== null) && (
         <div className="notice notice-offline">
-          <strong>Your drawing and marked spot stay on this phone.</strong>
-          <span>
-            An offline code carries a position and nothing else — there is no server to hold them.
-            Describe them out loud instead, or get an expiring code when you have signal.
-          </span>
+          {thirdParty ? (
+            <>
+              {/* The offline code encodes the marked spot itself, so the
+                  PLACE travels — the name, icon and drawing do not. */}
+              <strong>The marker's name and your drawing stay on this phone.</strong>
+              <span>
+                An offline code still points at the marked spot, but it carries the position and
+                nothing else. Say the name out loud instead, or get an expiring code when you
+                have signal.
+              </span>
+            </>
+          ) : (
+            <>
+              <strong>Your drawing and marked spot stay on this phone.</strong>
+              <span>
+                An offline code carries a position and nothing else — there is no server to hold
+                them. Describe them out loud instead, or get an expiring code when you have
+                signal.
+              </span>
+            </>
+          )}
         </div>
       )}
 
@@ -1570,13 +1688,21 @@ function LocatedSheet({
 
       {marker !== null && !iconPickerOpen && (
         <p className="marker-row">
-          A spot is marked. Tap the map to move it; tap the diamond to name it.
+          {thirdParty
+            ? 'Your code will point to this spot. Tap the map to move it; tap the diamond to name it.'
+            : 'A spot is marked. Tap the map to move it; tap the diamond to name it.'}
           <span className="marker-row-actions">
             <button className="link-button" onClick={onRemoveMarker}>
               Remove it
             </button>
           </span>
         </p>
+      )}
+
+      {/* No marker yet in the report-elsewhere flow: the way forward is the
+          whole message, because nothing can be shared until a spot exists. */}
+      {thirdParty && marker === null && !iconPickerOpen && (
+        <p className="marker-row">Search for a place, or tap the map to mark the spot you mean.</p>
       )}
 
       {/* A GNSS fix that settled poor. Manual pins are excluded — they are as
@@ -1663,7 +1789,11 @@ function LocatedSheet({
         <p className="accuracy-readout">
           {acquiring
             ? `Improving the fix… ±${Math.round(position.accuracyM)}m so far`
-            : describeSource(position.source, position.accuracyM)}
+            : thirdParty
+              ? marker === null
+                ? 'Mark the spot to get your code'
+                : `Marked spot, ±${Math.round(marker.accuracyM)}m — the code points here`
+              : describeSource(position.source, position.accuracyM)}
         </p>
         <div className="sheet-icons">
           <button
@@ -1689,7 +1819,13 @@ function LocatedSheet({
         </div>
       </div>
 
-      <button className="big-button" onClick={onShare} disabled={minting}>
+      {/* A marker-share has nothing to point a code at until a spot exists —
+          offering the button anyway would mint a code for the demo default. */}
+      <button
+        className="big-button"
+        onClick={onShare}
+        disabled={minting || (thirdParty && marker === null)}
+      >
         {minting ? 'Creating code…' : online ? 'Get my code' : 'Get my offline code'}
       </button>
     </div>

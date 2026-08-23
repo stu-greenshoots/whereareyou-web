@@ -103,11 +103,22 @@ export function mintSession(options: MintOptions): Promise<ApiResult<CreateSessi
   });
 }
 
-/** One-way: a static session becomes joinable. Never the reverse. */
-export function upgradeToLive(code: string, updateToken: string): Promise<ApiResult<void>> {
+/**
+ * One-way: a static session becomes joinable. Never the reverse.
+ *
+ * A third-party marker-share going live starts streaming the OWNER's own
+ * position, so the upgrade may also carry `subject: 'self'` — the server
+ * accepts the flip only at this moment and only in this direction, keeping
+ * the console's REPORTED banner truthful about what the position now is.
+ */
+export function upgradeToLive(
+  code: string,
+  updateToken: string,
+  options: { subject?: 'self' } = {},
+): Promise<ApiResult<void>> {
   return request<void>(`/v1/sessions/${code}`, {
     method: 'PATCH',
-    body: JSON.stringify({ updateToken, mode: 'live' }),
+    body: JSON.stringify({ updateToken, mode: 'live', ...options }),
   });
 }
 

@@ -470,12 +470,34 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
     formats.osGridRef !== null ? ` [${formats.osGridRef}]` : ''
   }`;
 
+  // The name the caller gave the spot they reported — the read-back handle
+  // ("blue tent by the weir"), never an address.
+  const markerName = (markers[0]?.name ?? '').trim();
+
   return (
     <>
       {thirdParty && (
         <div className="notice notice-thirdparty">
           <strong>Reported location — not the caller's own position.</strong>
-          <span>The caller told us about somewhere else. They are not necessarily here.</span>
+          <span>
+            The caller told us about somewhere else. They are not necessarily here.
+            {markerName !== '' && <> They call the spot “{markerName}”.</>}
+          </span>
+        </div>
+      )}
+
+      {/* A live session carrying marked spots: the position is the caller
+          themselves, moving — the diamond is the place they reported, fixed.
+          Without this banner the two would be one ambiguous map. */}
+      {!thirdParty && session.mode === 'live' && markers.length > 0 && (
+        <div className="notice notice-thirdparty">
+          <strong>
+            The caller marked {markerName !== '' ? <>“{markerName}”</> : 'a spot'} — it is not
+            their own position.
+          </strong>
+          <span>
+            The diamond stays where they put it. The moving position is the caller themselves.
+          </span>
         </div>
       )}
 

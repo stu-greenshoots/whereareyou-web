@@ -32,6 +32,13 @@ export interface ActiveShare {
   markerIcon: MarkerIcon;
   /** All placed markers. The source of truth since live v2. */
   markers?: SessionMarker[];
+  /**
+   * Whether this was a "share a different location" (marker-share): the code
+   * points AT the marked spot rather than at the sharer. Restored on resume
+   * so the code screen keeps telling the marker story after a reload.
+   * Absent on entries written by older builds — read as false.
+   */
+  thirdParty?: boolean;
 }
 
 const ACTIVE_KEY = 'activeShare';
