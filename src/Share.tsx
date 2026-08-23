@@ -7,8 +7,8 @@ import { useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { useSharedConnectivity } from './connectivity.js';
-import { Map, releaseFollow } from './Map.jsx';
-import { MarkerStrip } from './MarkerStrip.jsx';
+import { Map, disarmPointTool, releaseFollow } from './Map.jsx';
+import { MarkerPlaceStrip, MarkerStrip } from './MarkerStrip.jsx';
 import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
@@ -561,7 +561,12 @@ export function Share() {
         },
       ]);
       setIconPickerOpen(true);
-      if (locatedMapRef.current !== null) releaseFollow(locatedMapRef.current);
+      if (locatedMapRef.current !== null) {
+        releaseFollow(locatedMapRef.current);
+        // A pick placed (or moved) the spot — the armed point tool, if it
+        // was how the strip opened, has nothing left to do.
+        disarmPointTool(locatedMapRef.current);
+      }
       // In the report-elsewhere flow the code points AT the marker, so the
       // session position follows it — and the GNSS refinement stops so a
       // late fix cannot drag it back off the chosen spot. Sharing where YOU
@@ -1044,6 +1049,20 @@ export function Share() {
           onMapReady={(instance) => {
             locatedMapRef.current = instance;
           }}
+          /* Arming the point tool opens the strip at once — pre-placement
+             (hint + search) while no spot exists, straight into the existing
+             spot's edit mode when one does. Disarming with nothing placed
+             closes it cleanly; with a spot placed the strip stays, because
+             it is that marker's edit mode now (the tool also puts itself
+             down right after a tap placement). */
+          onMarkerToolChange={(armed: boolean) => {
+            if (armed) {
+              if (locatedMapRef.current !== null) releaseFollow(locatedMapRef.current);
+              setIconPickerOpen(true);
+            } else if (markersRef.current.length === 0) {
+              setIconPickerOpen(false);
+            }
+          }}
           {...(located && markers.length > 0
             ? {
                 placedMarkers: markers.map((m) => ({
@@ -1150,6 +1169,9 @@ export function Share() {
                     return [trimmed === '' ? rest : { ...rest, name: trimmed }, ...current.slice(1)];
                   });
                   setIconPickerOpen(false);
+                  // Done also puts the point tool down if it is still up —
+                  // with nothing placed, that IS the pre-placement close.
+                  if (locatedMapRef.current !== null) disarmPointTool(locatedMapRef.current);
                 }}
                 onRemoveMarker={() => {
                   setMarkers([]);
@@ -1682,10 +1704,27 @@ function LocatedSheet({
   const formats = allFormats(position.lat, position.lon);
   const togglePanel = onTogglePanel;
 
-  // While a spot is being placed, the strip IS the sheet: one slim row over
-  // the map, everything else out of the way until Done. The mint button and
-  // the readout come straight back — in the report-elsewhere flow that is
-  // where "the code points here" appears once the spot exists.
+  // While a spot is being placed or edited, the strip IS the sheet: one slim
+  // row over the map, everything else out of the way until Done. The mint
+  // button and the readout come straight back — in the report-elsewhere flow
+  // that is where "the code points here" appears once the spot exists.
+  // Before anything is placed (the armed point tool), the strip's
+  // pre-placement state carries the hint and the search, so searching can
+  // come before the first tap; a pick or a tap lands the spot and the same
+  // open strip becomes its edit mode.
+  if (iconPickerOpen && marker === null) {
+    return (
+      <MarkerPlaceStrip
+        hint={
+          thirdParty ? 'Tap the map to mark the spot you mean.' : 'Tap the map to mark the spot.'
+        }
+        onSearchPick={online ? onSearchPick : undefined}
+        searchFailText="Search did not respond — you can still tap the map to mark the spot."
+        searchEmptyText="Nothing found for that. Try adding a town, or tap the map to mark the spot."
+        onDone={onCloseIconPicker}
+      />
+    );
+  }
   if (iconPickerOpen && marker !== null) {
     return (
       <MarkerStrip

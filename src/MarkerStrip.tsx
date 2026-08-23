@@ -11,12 +11,15 @@ import { PlaceSearch } from './PlaceSearch.jsx';
  * name + buttons all at once), which was dense enough to lose someone
  * mid-crisis.
  *
- * Placing is two taps: tap the map (the marker drops with a default icon and
- * the camera does not move) and tap Done. Everything else is progressive
- * disclosure — the icon grid folds behind the chip, the place search behind
- * a glyph — and each expands ABOVE the strip so the row itself never grows.
- * Every surface that places markers mounts this same strip: the share screen
- * (self and report-elsewhere) and the live room (owner and joiner).
+ * While this strip is open the marker is IN EDIT MODE: every map tap moves
+ * it to the tapped point (the parent wires that), repeatedly, until Done
+ * commits and closes the strip. Tapping a placed marker later reopens the
+ * strip in the same mode — one mode, entered from either end. Everything
+ * else is progressive disclosure — the icon grid folds behind the chip, the
+ * place search behind a glyph — and each expands ABOVE the strip so the row
+ * itself never grows. Every surface that places markers mounts this same
+ * strip: the share screen (self and report-elsewhere) and the live room
+ * (owner and joiner).
  *
  * A search pick moves THE MARKER, never the map — the off-screen edge pills
  * point at a marker that lands out of view, which is exactly what they are
@@ -111,6 +114,70 @@ export function MarkerStrip({
             aria-expanded={expanded === 'search'}
             title="Search for a place"
             onClick={() => setExpanded((current) => (current === 'search' ? 'none' : 'search'))}
+          >
+            <SearchIcon />
+          </button>
+        )}
+        <button type="button" className="button button-primary marker-strip-done" onClick={onDone}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The strip's PRE-PLACEMENT state: the point tool is armed but nothing is
+ * placed yet. Same slim row, but with no marker there is nothing for the
+ * icon chip or name to describe — the row carries the one-line hint and,
+ * crucially, the place search, so searching can come BEFORE the first tap:
+ * a pick PLACES the marker (there is nothing to move yet) and the parent
+ * hands over to the edit strip above. Done with nothing placed just closes
+ * — the way out for someone who armed the tool and changed their mind.
+ */
+export function MarkerPlaceStrip({
+  hint,
+  onSearchPick,
+  searchFailText,
+  searchEmptyText,
+  onDone,
+}: {
+  /** The one-line way forward, per surface: tap the map, or search. */
+  hint: string;
+  /** Left undefined while offline — same rule as the edit strip: a field
+      that cannot answer is worse than none. A pick PLACES the marker. */
+  onSearchPick?: ((lat: number, lon: number, accuracyM: number, label: string) => void) | undefined;
+  searchFailText: string;
+  searchEmptyText: string;
+  onDone: () => void;
+}) {
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  return (
+    <div className="map-sheet marker-strip-sheet">
+      {searchOpen && onSearchPick !== undefined && (
+        <div className="marker-strip-pop">
+          <PlaceSearch
+            onPick={(lat, lon, accuracyM, label) => {
+              setSearchOpen(false);
+              onSearchPick(lat, lon, accuracyM, label);
+            }}
+            failText={searchFailText}
+            emptyText={searchEmptyText}
+          />
+        </div>
+      )}
+
+      <div className="marker-strip">
+        <p className="marker-strip-hint">{hint}</p>
+        {onSearchPick !== undefined && (
+          <button
+            type="button"
+            className={`sheet-icon ${searchOpen ? 'sheet-icon-active' : ''}`}
+            aria-label="Search for a place to mark"
+            aria-expanded={searchOpen}
+            title="Search for a place"
+            onClick={() => setSearchOpen((open) => !open)}
           >
             <SearchIcon />
           </button>

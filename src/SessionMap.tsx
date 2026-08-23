@@ -36,6 +36,7 @@ import { useSharedConnectivity } from './connectivity.js';
 import { placeShortName } from './PlaceSearch.jsx';
 import {
   Map,
+  disarmPointTool,
   escapeHtml,
   isSafeAvatar,
   releaseFollow,
@@ -45,7 +46,7 @@ import {
   type PlacedMarker,
   type TileVariant,
 } from './Map.jsx';
-import { MarkerStrip } from './MarkerStrip.jsx';
+import { MarkerPlaceStrip, MarkerStrip } from './MarkerStrip.jsx';
 import { NotifyControl } from './Notify.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
@@ -239,10 +240,17 @@ export function SessionMap({
   const [myPosition, setMyPosition] = useState<Position | null>(null);
   /** The points I placed — claims about the world, never where I am. */
   const [myMarkers, setMyMarkers] = useState<SessionMarker[]>(initialMarkers);
-  /** Which of my markers has its edit sheet open, and how it opened —
+  /** Which of my markers has its edit strip open, and how it opened —
       `place` is the just-dropped naming step, `tap` is revisiting one that
-      already exists (the only time the sheet offers "Open in maps"). */
+      already exists (the only time the strip offers "Open in maps"). Either
+      way the marker is in EDIT MODE while this is set: map taps MOVE it,
+      repeatedly, until Done. */
   const [markerEdit, setMarkerEdit] = useState<{ id: string; via: 'place' | 'tap' } | null>(null);
+  const markerEditRef = useRef(markerEdit);
+  markerEditRef.current = markerEdit;
+  /** The point tool is armed but nothing is placed yet — the pre-placement
+      strip is up, carrying the hint and the search-before-first-placement. */
+  const [placingMarker, setPlacingMarker] = useState(false);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [events, setEvents] = useState<LiveEvent[]>([]);
@@ -594,6 +602,46 @@ export function SessionMap({
     [commitMarkers],
   );
 
+  /** Move one of my markers to a tapped point — the edit-mode gesture. The
+      camera stays put (the edge pills cover a landing out of view); the room
+      gets the usual full-list replace, so the move travels like any edit. */
+  const moveMarker = useCallback(
+    (id: string, lat: number, lon: number, accuracyM: number) => {
+      commitMarkers(
+        myMarkersRef.current.map((m) =>
+          m.id === id
+            ? {
+                ...m,
+                position: {
+                  lat,
+                  lon,
+                  accuracyM,
+                  source: 'manual' as const,
+                  takenAt: new Date().toISOString(),
+                },
+              }
+            : m,
+        ),
+      );
+    },
+    [commitMarkers],
+  );
+
+  /** What a map tap means right now: with an edit strip open it MOVES that
+      marker (repeatedly, until Done); otherwise it places a new one — the
+      armed point tool's tap, which then opens the new marker's edit strip. */
+  const placeOrMoveMarker = useCallback(
+    (lat: number, lon: number, accuracyM: number) => {
+      const editing = markerEditRef.current;
+      if (editing !== null) {
+        moveMarker(editing.id, lat, lon, accuracyM);
+        return;
+      }
+      placeMarker(lat, lon, accuracyM);
+    },
+    [moveMarker, placeMarker],
+  );
+
   /** The marker strip's search: move THIS marker to the picked place,
       naming it after the place if it had no name. The camera stays put —
       the off-screen edge pills point at a marker that lands out of view —
@@ -648,16 +696,76 @@ export function SessionMap({
     );
   }, []);
 
-  const closeMarkerEdit = useCallback(() => {
-    // Normalise the name on the way out, then tell the room.
+  /** Normalise every name and tell the room — the shared tail of Done, of
+      switching the strip to another marker mid-edit, and of arming the
+      point tool over an open edit. */
+  const commitMarkerNames = useCallback(() => {
     const next = myMarkersRef.current.map((m) => {
       const trimmed = (m.name ?? '').trim();
       const { name: _dropped, ...rest } = m;
       return trimmed === '' ? rest : { ...rest, name: trimmed };
     });
     commitMarkers(next);
-    setMarkerEdit(null);
   }, [commitMarkers]);
+
+  const closeMarkerEdit = useCallback(() => {
+    commitMarkerNames();
+    setMarkerEdit(null);
+  }, [commitMarkerNames]);
+
+  /** The pre-placement strip's search: the marker does not exist yet, so a
+      pick PLACES it — named after the place, still editable — and the strip
+      hands over to edit mode. The point tool's job is done, so it goes
+      down; the camera stays put, and follow goes down with it so the next
+      streaming fix cannot snap the view off the spot being edited. */
+  const placeMarkerFromSearch = useCallback(
+    (lat: number, lon: number, accuracyM: number, label: string) => {
+      const current = myMarkersRef.current;
+      if (current.length >= MAX_SESSION_MARKERS) return;
+      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
+      const marker: SessionMarker = {
+        id: newLiveId(),
+        position: { lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
+        icon: 'spot',
+        ...(placeName !== '' ? { name: placeName } : {}),
+      };
+      commitMarkers([...current, marker]);
+      setMarkerEdit({ id: marker.id, via: 'place' });
+      setPlacingMarker(false);
+      if (liveMap !== null) {
+        disarmPointTool(liveMap);
+        releaseFollow(liveMap);
+      }
+    },
+    [commitMarkers, liveMap],
+  );
+
+  /** The point tool arming or disarming. Arming over an open edit commits
+      it — one mode at a time — and puts follow down (a strip is about to
+      open over the map). The disarm side also fires when the tool puts
+      itself down after a tap placement; the guard in the render (edit strip
+      wins) keeps that from folding the fresh edit away. */
+  const onMarkerToolChange = useCallback(
+    (armed: boolean) => {
+      if (armed) {
+        if (markerEditRef.current !== null) {
+          commitMarkerNames();
+          setMarkerEdit(null);
+        }
+        if (liveMap !== null) releaseFollow(liveMap);
+        setPlacingMarker(true);
+      } else {
+        setPlacingMarker(false);
+      }
+    },
+    [commitMarkerNames, liveMap],
+  );
+
+  /** Done on the pre-placement strip — nothing was placed; close cleanly. */
+  const closePlacing = useCallback(() => {
+    setPlacingMarker(false);
+    if (liveMap !== null) disarmPointTool(liveMap);
+  }, [liveMap]);
 
   const removeMarker = useCallback(
     (id: string) => {
@@ -886,9 +994,13 @@ export function SessionMap({
         position: marker.position,
         icon: marker.icon,
         onTap: () => {
-          // The edit sheet opens over this marker — follow goes down so a
-          // fix cannot drag the map off the spot being edited.
+          // Tapping a placed marker re-enters its edit mode — the same
+          // strip, taps move it, Done commits. Follow goes down so a fix
+          // cannot drag the map off the spot being edited; switching from
+          // another open edit commits that one first — one mode, one marker.
           if (liveMap !== null) releaseFollow(liveMap);
+          const open = markerEditRef.current;
+          if (open !== null && open.id !== marker.id) commitMarkerNames();
           setMarkerEdit({ id: marker.id, via: 'tap' });
         },
       });
@@ -1044,7 +1156,12 @@ export function SessionMap({
           const target = role === 'owner' ? selfId : (owner?.id ?? null);
           if (target !== null) setCard({ id: target, via: 'map' });
         }}
-        onPlaceMarker={placeMarker}
+        onPlaceMarker={placeOrMoveMarker}
+        /* Edit mode: while a marker's strip is open, a plain tap moves that
+           marker — the tap only regains its usual meaning (nothing) once
+           Done has closed the strip. */
+        markerOnClick={markerEdit !== null}
+        onMarkerToolChange={onMarkerToolChange}
         onZoneDraw={onZoneDraw}
         zonesFull={zonesFull}
         markersFull={myMarkers.length >= MAX_SESSION_MARKERS}
@@ -1073,6 +1190,19 @@ export function SessionMap({
         className="map map-fill"
         fullscreenOverlay={
           <>
+            {/* The point tool is armed and nothing is placed yet: the strip
+                opens straight away in its pre-placement state, so the place
+                search is available BEFORE the first tap. The edit strip
+                below wins the moment a marker exists. */}
+            {editingMarker === undefined && placingMarker && (
+              <MarkerPlaceStrip
+                hint="Tap the map to place the point."
+                onSearchPick={online ? placeMarkerFromSearch : undefined}
+                searchFailText="Search did not respond — you can still tap the map to place the point."
+                searchEmptyText="Nothing found for that. Try adding a town, or tap the map to place the point."
+                onDone={closePlacing}
+              />
+            )}
             {editingMarker !== undefined && (
               <MarkerStrip
                 icon={editingMarker.icon}

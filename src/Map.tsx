@@ -107,6 +107,24 @@ export function centreOnPlacement(map: L.Map, lat: number, lon: number, minZoom 
 }
 
 /**
+ * Same plumbing for the place-a-point tool. Parents own the marker strip
+ * that fronts the tool, so they need to hear the tool arm and disarm
+ * (`onMarkerToolChange`) and to put it down themselves when their own
+ * placement path fires without a map tap — a pre-placement search pick.
+ */
+const markerToolHooksByMap = new WeakMap<L.Map, { disarm: () => void }>();
+
+/**
+ * Put the place-a-point tool down on this map. For parents whose placement
+ * just happened OFF the map — a search pick from the pre-placement strip —
+ * and for a strip's Done while the tool is still up. A no-op on maps
+ * without the tool, or with it already down.
+ */
+export function disarmPointTool(map: L.Map): void {
+  markerToolHooksByMap.get(map)?.disarm();
+}
+
+/**
  * Only a small same-shape data URL may become an <img> in marker HTML.
  * Peer avatars arrive over the wire from OTHER people, and these strings are
  * interpolated into innerHTML — the base64 charset contains no quote or
@@ -491,9 +509,18 @@ export interface MapProps {
   onPlaceMarker?: (lat: number, lon: number, accuracyM: number) => void;
   /**
    * A plain tap (no tool active) places the marker too — the share screen's
-   * "the spot I mean is here" gesture. Needs onPlaceMarker.
+   * "the spot I mean is here" gesture, and every surface's move-the-marker
+   * gesture while its edit strip is open. Needs onPlaceMarker.
    */
   markerOnClick?: boolean;
+  /**
+   * Fires when the place-a-point tool is picked up or put down — how the
+   * parent shows its pre-placement marker strip (search before the first
+   * placement) the moment the tool arms, and folds it away when the tool
+   * goes down. Transitions only, never the initial state; the tool putting
+   * itself down after a placement fires it too.
+   */
+  onMarkerToolChange?: (armed: boolean) => void;
   /**
    * Whether a plain click may move the PIN. Off wherever a click means
    * "mark a spot" instead — the pin is a person, and it stays one.
@@ -591,6 +618,7 @@ export function Map({
   markersFull = false,
   onPlaceMarker,
   markerOnClick = false,
+  onMarkerToolChange,
   moveOnClick = true,
   allowFullscreen = false,
   showViewerLocation = false,
@@ -684,6 +712,8 @@ export function Map({
   const focusTrailRef = useRef<L.Polyline | null>(null);
   const onPlaceMarkerRef = useRef(onPlaceMarker);
   onPlaceMarkerRef.current = onPlaceMarker;
+  const onMarkerToolChangeRef = useRef(onMarkerToolChange);
+  onMarkerToolChangeRef.current = onMarkerToolChange;
   const onZoneDrawRef = useRef(onZoneDraw);
   onZoneDrawRef.current = onZoneDraw;
   const onPinTapRef = useRef(onPinTap);
@@ -777,6 +807,31 @@ export function Map({
     // setFollow only writes state; it cannot go stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, followAvailable]);
+
+  // The point tool's parent-facing plumbing. The disarm hook mirrors the
+  // follow hooks above: a parent holding only the Leaflet map can put the
+  // tool down when its own placement path (a pre-placement search pick)
+  // fires without a map tap.
+  useEffect(() => {
+    if (map === null) return;
+    markerToolHooksByMap.set(map, {
+      disarm: () => setActiveTool((current) => (current === 'marker' ? 'none' : current)),
+    });
+    return () => {
+      markerToolHooksByMap.delete(map);
+    };
+  }, [map]);
+
+  // Tell the parent when the tool arms or disarms — transitions only, so a
+  // mount (or a StrictMode remount) can never fold away a strip the parent
+  // legitimately has open.
+  const markerToolArmed = activeTool === 'marker';
+  const markerToolWasArmedRef = useRef(false);
+  useEffect(() => {
+    if (markerToolWasArmedRef.current === markerToolArmed) return;
+    markerToolWasArmedRef.current = markerToolArmed;
+    onMarkerToolChangeRef.current?.(markerToolArmed);
+  }, [markerToolArmed]);
 
   // The surface can change its stance (report-elsewhere drops the self pin
   // entirely); follow stands down or re-arms with it.
@@ -1622,12 +1677,9 @@ export function Map({
       {viewerNote !== null && <p className="map-viewer-note">{viewerNote}</p>}
 
       <div className="map-bottom-stack">
-      {/* The armed point tool gets a one-line hint and nothing more — the
-          marker strip that follows the tap carries the icon grid and the
-          place search, folded away until asked for. */}
-      {activeTool === 'marker' && (
-        <p className="map-tools-note">Tap the map to place a point.</p>
-      )}
+      {/* The armed point tool gets no note of its own: arming it makes the
+          parent mount the pre-placement marker strip (onMarkerToolChange),
+          and that strip carries the hint and the place search. */}
       {sketchFull && (
         <p className="map-tools-note">
           The sketch is full. Undo or clear a shape to draw more.
