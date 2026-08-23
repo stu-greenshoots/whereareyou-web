@@ -7,7 +7,8 @@ import { useAccount } from './AccountContext.jsx';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
 import { useSharedConnectivity } from './connectivity.js';
-import { Map, MarkerIconPicker } from './Map.jsx';
+import { Map, MarkerIconPicker, centreOnPlacement } from './Map.jsx';
+import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
 import { loadActiveShare, persistActiveShare, type ActiveShare } from './local-session.js';
@@ -263,9 +264,9 @@ export function Share() {
   const [stopFailure, setStopFailure] = useState<string | null>(null);
   /** A fix is being acquired/refined (initial locate, or the map's locate button). */
   const [acquiring, setAcquiring] = useState(false);
-  /** The located map's Leaflet instance, so a search pick in the
-      report-elsewhere flow can fly the view to the marker it just placed —
-      with the person-pin hidden there, nothing else moves the camera. */
+  /** The located map's Leaflet instance, so a search pick can centre the
+      view on the marker it just placed — a picked place may be far
+      off-screen, and a marker nobody can see might as well not exist. */
   const locatedMapRef = useRef<LeafletMap | null>(null);
   const acquireWatchRef = useRef<number | null>(null);
   const acquireTimerRef = useRef<number | null>(null);
@@ -513,6 +514,51 @@ export function Share() {
     setThirdParty(true);
     setPhase({ name: 'located', position: { ...DEMO_POSITION, takenAt: new Date().toISOString() } });
   }, [stopAcquire]);
+
+  /**
+   * A picked search result, from ANY of the located map's search fields (the
+   * report-elsewhere lead-in, the spot sheet, the armed point tool).
+   * Searching IS marking: the result lands as the named diamond (the place's
+   * name as the default, still editable), the what-is-this-spot sheet opens,
+   * and the view centres on it — a placement the camera ignores might as
+   * well not have happened.
+   */
+  const searchPick = useCallback(
+    (lat: number, lon: number, accuracyM: number, label: string) => {
+      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
+      // A picked place is a handy default name for the history.
+      if (shareName.trim() === '' && placeName !== '') setShareName(placeName);
+      const spot: Position = {
+        lat,
+        lon,
+        accuracyM,
+        source: 'manual',
+        takenAt: new Date().toISOString(),
+      };
+      setMarkers((current) => [
+        {
+          id: current[0]?.id ?? newLiveId(),
+          position: spot,
+          icon: current[0]?.icon ?? 'spot',
+          ...((current[0]?.name ?? placeName) !== ''
+            ? { name: current[0]?.name ?? placeName }
+            : {}),
+        },
+      ]);
+      setIconPickerOpen(true);
+      if (locatedMapRef.current !== null) centreOnPlacement(locatedMapRef.current, lat, lon, 16);
+      // In the report-elsewhere flow the code points AT the marker, so the
+      // session position follows it — and the GNSS refinement stops so a
+      // late fix cannot drag it back off the chosen spot. Sharing where YOU
+      // are, the searched place is only a marked spot: your own pin, and
+      // its refinement, stay untouched.
+      if (thirdParty) {
+        stopAcquire();
+        setPhase({ name: 'located', position: spot });
+      }
+    },
+    [shareName, thirdParty, stopAcquire],
+  );
 
   /** Reuse a past share: back onto the located screen with everything set. */
   const reuseShare = useCallback(
@@ -980,6 +1026,9 @@ export function Share() {
                 onLocate: relocate,
                 onSketchChange: setSketch,
                 markerOnClick: true,
+                // Arming the point tool leads with the same search every
+                // other placement path gets. The Map withholds it offline.
+                onMarkerSearchPick: searchPick,
                 onPlaceMarker: (lat: number, lon: number, accuracyM: number) => {
                   // A tap is "the spot I mean is HERE" — the pin is a person
                   // and taps never move people. Pre-mint the flow keeps ONE
@@ -1074,38 +1123,7 @@ export function Share() {
                 online={online}
                 sketch={sketch}
                 thirdParty={thirdParty}
-                onSearchPick={(lat, lon, accuracyM, label) => {
-                  stopAcquire();
-                  // A picked place is a handy default name for the history.
-                  const placeName = label.split(',')[0]?.trim() ?? '';
-                  if (shareName.trim() === '') setShareName(placeName);
-                  const spot: Position = {
-                    lat,
-                    lon,
-                    accuracyM,
-                    source: 'manual',
-                    takenAt: new Date().toISOString(),
-                  };
-                  // Searching IS marking: the result lands as the named
-                  // diamond (the place's name as the default, still
-                  // editable), the what-is-this-spot sheet opens, and the
-                  // view flies there — the hidden person-pin no longer
-                  // drives the camera. Search renders only in the
-                  // report-elsewhere flow, so this is that flow.
-                  setMarkers((current) => [
-                    {
-                      id: current[0]?.id ?? newLiveId(),
-                      position: spot,
-                      icon: current[0]?.icon ?? 'spot',
-                      ...((current[0]?.name ?? placeName) !== ''
-                        ? { name: current[0]?.name ?? placeName }
-                        : {}),
-                    },
-                  ]);
-                  setIconPickerOpen(true);
-                  locatedMapRef.current?.setView([lat, lon], 17, { animate: false });
-                  setPhase({ name: 'located', position: spot });
-                }}
+                onSearchPick={searchPick}
                 note={note}
                 setNote={setNote}
                 name={shareName}
@@ -1630,8 +1648,15 @@ function LocatedSheet({
   return (
     <div className="map-sheet">
       {/* Reporting somewhere else usually starts with a name, not a drag —
-          search appears only in that flow, and only with a connection. */}
-      {thirdParty && online && <PlaceSearch onPick={onSearchPick} />}
+          the search leads that flow (and only with a connection). It steps
+          aside while the spot sheet is open, which carries its own. */}
+      {thirdParty && online && !iconPickerOpen && (
+        <PlaceSearch
+          onPick={onSearchPick}
+          failText="Search did not respond — you can still tap the map to mark the spot."
+          emptyText="Nothing found for that. Try adding a town, or tap the map to mark the spot."
+        />
+      )}
       {thirdParty && !online && (
         <p className="offline-gate">
           Place search needs a connection — you can still tap the map to mark the spot instead.
@@ -1667,6 +1692,16 @@ function LocatedSheet({
       {iconPickerOpen && marker !== null && (
         <div className="sheet-panel sheet-panel-marker">
           <span className="panel-title">What is this spot?</span>
+          {/* The sheet leads with search: a place can be named instead of
+              tapped, and a pick moves this spot there (pre-filling the name
+              below). Online only — offline the tap keeps working alone. */}
+          {online && (
+            <PlaceSearch
+              onPick={onSearchPick}
+              failText="Search did not respond — you can still tap the map to move the spot."
+              emptyText="Nothing found for that. Try adding a town, or tap the map."
+            />
+          )}
           <MarkerIconPicker current={markerIcon} onPick={onPickIcon} />
           <input
             className="note-input"
@@ -1828,119 +1863,6 @@ function LocatedSheet({
       >
         {minting ? 'Creating code…' : online ? 'Get my code' : 'Get my offline code'}
       </button>
-    </div>
-  );
-}
-
-/**
- * Place search for the report-somewhere-else flow, via OSM's Nominatim (the
- * same ecosystem as the tiles; no key needed). Search fires ONLY on submit —
- * never per keystroke — which keeps us far inside the public instance's
- * usage policy. The typed query does leave the device, so this renders only
- * when the caller is deliberately looking a place up, never for their own
- * position.
- */
-function PlaceSearch({
-  onPick,
-}: {
-  onPick: (lat: number, lon: number, accuracyM: number, label: string) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Array<{
-    lat: number;
-    lon: number;
-    accuracyM: number;
-    label: string;
-  }> | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-
-  const run = async () => {
-    const q = query.trim();
-    if (q === '' || busy) return;
-    setBusy(true);
-    setFailed(false);
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(q)}`,
-        { headers: { Accept: 'application/json' } },
-      );
-      if (!response.ok) throw new Error(String(response.status));
-      const data = (await response.json()) as Array<{
-        lat: string;
-        lon: string;
-        display_name: string;
-        boundingbox?: [string, string, string, string];
-      }>;
-      setResults(
-        data.map((place) => {
-          const lat = Number(place.lat);
-          const lon = Number(place.lon);
-          // Honest precision: half the result's bounding-box diagonal. A
-          // named building is tens of metres; a whole town caps at ±300m
-          // rather than pretending to a pin-point.
-          let accuracyM = 50;
-          if (place.boundingbox !== undefined) {
-            const [south, north, west, east] = place.boundingbox.map(Number) as [number, number, number, number];
-            const northM = (north - south) * 111_320;
-            const eastM = (east - west) * 111_320 * Math.cos((lat * Math.PI) / 180);
-            accuracyM = Math.round(Math.min(300, Math.max(10, Math.hypot(northM, eastM) / 2)));
-          }
-          return { lat, lon, accuracyM, label: place.display_name };
-        }),
-      );
-    } catch {
-      setFailed(true);
-      setResults(null);
-    }
-    setBusy(false);
-  };
-
-  return (
-    <div className="place-search">
-      <form
-        className="place-search-row"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void run();
-        }}
-      >
-        <input
-          className="note-input"
-          type="search"
-          placeholder="Search for a place or address"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <button type="submit" className="button button-primary" disabled={busy || query.trim() === ''}>
-          {busy ? 'Searching…' : 'Search'}
-        </button>
-      </form>
-
-      {failed && (
-        <p className="panel-hint">Search did not respond — you can still drag the pin instead.</p>
-      )}
-      {results !== null && results.length === 0 && (
-        <p className="panel-hint">Nothing found for that. Try adding a town, or drag the pin.</p>
-      )}
-      {results !== null && results.length > 0 && (
-        <div className="history-list place-results">
-          {results.map((place) => (
-            <button
-              key={`${place.lat},${place.lon}`}
-              type="button"
-              className="history-row"
-              onClick={() => {
-                setResults(null);
-                onPick(place.lat, place.lon, place.accuracyM, place.label);
-              }}
-            >
-              <strong>{place.label.split(',')[0]}</strong>
-              <span>{place.label.split(',').slice(1).join(',').trim()}</span>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

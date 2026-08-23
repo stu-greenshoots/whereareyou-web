@@ -11,6 +11,7 @@ import {
   sketchBounds,
 } from '@whereareyou/protocol';
 import type { MarkerIcon, Sketch, SketchColour } from '@whereareyou/protocol';
+import { PlaceSearch } from './PlaceSearch.jsx';
 import { SKETCH_INKS, attachSketch, type SketchHandle } from './sketch-layer.js';
 import {
   beginStroke,
@@ -34,6 +35,48 @@ function placementAccuracy(lat: number, zoom: number): number {
   const metresPerPixel = (40075016.686 * Math.cos((lat * Math.PI) / 180)) / 2 ** (zoom + 8);
   const TOLERANCE_PX = 6; // how close a human can realistically tap
   return Math.round(Math.min(300, Math.max(3, metresPerPixel * TOLERANCE_PX)));
+}
+
+/**
+ * Centre the view on a point somebody DELIBERATELY placed — a tapped marker,
+ * a picked search result. Never called mid-gesture — placement is a
+ * committed act, which is exactly why it may move the camera when a drag or
+ * a stroke must not.
+ *
+ * "Centre" means the middle of the map the person can SEE: placing a marker
+ * opens the naming sheet over the bottom of the map, and a marker centred
+ * underneath that sheet might as well be off-screen. So the work is deferred
+ * a tick (letting the sheet the placement opens reach the DOM), the bottom
+ * overlay stack is measured, and the point lands in the middle of what it
+ * leaves visible.
+ *
+ * Always a jump-cut, never a glide: event.latlng is unreliable while a pan
+ * or zoom animation runs (the same reasoning as the first-fix jump below),
+ * so an animated recentre would send the very next tap somewhere absurd —
+ * and placements happen exactly when the next tap is likely.
+ *
+ * `minZoom` is for search picks: a result chosen from a list needs a
+ * street-level view to mean anything, where a tap already happened at
+ * whatever zoom the person chose and keeps it.
+ */
+export function centreOnPlacement(map: L.Map, lat: number, lon: number, minZoom = 0): void {
+  setTimeout(() => {
+    const container = map.getContainer();
+    if (!container.isConnected) return; // the map went away mid-defer
+    const size = map.getSize();
+    const stack = container.parentElement?.querySelector('.map-bottom-stack');
+    const covered = stack instanceof HTMLElement ? Math.min(stack.offsetHeight, size.y) : 0;
+    const zoom = Math.max(map.getZoom(), minZoom);
+    // Shift the centre so the target lands halfway down the UNCOVERED strip —
+    // clamped so however tall the sheet, the point stays clear of the top
+    // edge (and its controls) rather than being pushed off the map.
+    const offset = Math.max(0, Math.min(covered / 2, size.y / 2 - 44));
+    const centre = map.unproject(
+      map.project(L.latLng(lat, lon), zoom).add(L.point(0, Math.round(offset))),
+      zoom,
+    );
+    map.setView(centre, zoom, { animate: false });
+  }, 0);
 }
 
 /**
@@ -425,6 +468,16 @@ export interface MapProps {
    */
   markerOnClick?: boolean;
   /**
+   * When set, arming the point tool leads with a place search: a sheet with
+   * a search field appears the moment the tool is picked up, so a marker can
+   * be placed by NAME before any tap. Picking a result puts the tool down
+   * and hands the place to the parent, which places (and centres on) the
+   * marker exactly as its own search flows do. Tapping the map still works
+   * unchanged. Withheld while `offline` — search cannot answer without a
+   * connection, and a field that cannot answer is worse than none.
+   */
+  onMarkerSearchPick?: (lat: number, lon: number, accuracyM: number, label: string) => void;
+  /**
    * Whether a plain click may move the PIN. Off wherever a click means
    * "mark a spot" instead — the pin is a person, and it stays one.
    */
@@ -499,6 +552,7 @@ export function Map({
   markersFull = false,
   onPlaceMarker,
   markerOnClick = false,
+  onMarkerSearchPick,
   moveOnClick = true,
   allowFullscreen = false,
   showViewerLocation = false,
@@ -565,6 +619,8 @@ export function Map({
   const focusTrailRef = useRef<L.Polyline | null>(null);
   const onPlaceMarkerRef = useRef(onPlaceMarker);
   onPlaceMarkerRef.current = onPlaceMarker;
+  const onMarkerSearchPickRef = useRef(onMarkerSearchPick);
+  onMarkerSearchPickRef.current = onMarkerSearchPick;
   const onZoneDrawRef = useRef(onZoneDraw);
   onZoneDrawRef.current = onZoneDraw;
   const onPinTapRef = useRef(onPinTap);
@@ -948,6 +1004,9 @@ export function Map({
         event.latlng.lng,
         placementAccuracy(event.latlng.lat, map.getZoom()),
       );
+      // A placed point becomes the centre of attention — literally. The tap
+      // already happened at the person's chosen zoom, so this only pans.
+      centreOnPlacement(map, event.latlng.lat, event.latlng.lng);
       if (viaTool) setActiveTool('none');
     };
     map.on('click', handler);
@@ -1304,6 +1363,28 @@ export function Map({
       {viewerNote !== null && <p className="map-viewer-note">{viewerNote}</p>}
 
       <div className="map-bottom-stack">
+      {/* The point tool leads with search: the sheet appears the moment the
+          tool is armed, so placing a marker STARTS with a name when the
+          person has one — the tap stays available throughout. Picking a
+          result puts the tool down; the parent places and centres. */}
+      {activeTool === 'marker' && onMarkerSearchPick !== undefined && !offline && (
+        <div className="map-sheet map-sheet-marker-search">
+          <p className="panel-hint">Search for a place, or tap the map to place the point.</p>
+          <PlaceSearch
+            onPick={(lat, lon, accuracyM, label) => {
+              setActiveTool('none');
+              onMarkerSearchPickRef.current?.(lat, lon, accuracyM, label);
+            }}
+            failText="Search did not respond — you can still tap the map to place the point."
+            emptyText="Nothing found for that. Try adding a town, or tap the map."
+          />
+        </div>
+      )}
+      {activeTool === 'marker' && onMarkerSearchPick !== undefined && offline && (
+        <p className="offline-gate">
+          Place search needs a connection — tap the map to place the point instead.
+        </p>
+      )}
       {sketchFull && (
         <p className="map-tools-note">
           The sketch is full. Undo or clear a shape to draw more.

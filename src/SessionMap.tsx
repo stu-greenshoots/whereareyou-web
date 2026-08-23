@@ -32,9 +32,12 @@ import {
   type HeadingPermission,
 } from './Compass.jsx';
 import { connectLive, newLiveId, type LiveHandle, type LiveHandlers, type LiveWelcome } from './live.js';
+import { useSharedConnectivity } from './connectivity.js';
+import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import {
   Map,
   MarkerIconPicker,
+  centreOnPlacement,
   escapeHtml,
   isSafeAvatar,
   type MapChatFlag,
@@ -248,6 +251,11 @@ export function SessionMap({
   /** participantId → stamp of their latest message, while its bubble shows. */
   const [chatFlags, setChatFlags] = useState<Record<string, number>>({});
   const [, forceTick] = useState(0);
+
+  /** Whether the resolver looks reachable — the same belief the rest of the
+      app holds. Only gates the place search, which is online-only: offline
+      the tap keeps working alone, quietly. */
+  const { online } = useSharedConnectivity();
 
   const handleRef = useRef<LiveHandle | null>(null);
   const selfIdRef = useRef<string | null>(null);
@@ -548,6 +556,59 @@ export function SessionMap({
       setMarkerEdit({ id: marker.id, via: 'place' });
     },
     [commitMarkers],
+  );
+
+  /** A search pick while the point tool is up: the place lands as a NAMED
+      marker (the place's name as the default, still editable), the naming
+      sheet opens exactly as a tap's would, and the view centres on it. */
+  const placeMarkerFromSearch = useCallback(
+    (lat: number, lon: number, accuracyM: number, label: string) => {
+      const current = myMarkersRef.current;
+      if (current.length >= MAX_SESSION_MARKERS) return; // same belt as placeMarker
+      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
+      const marker: SessionMarker = {
+        id: newLiveId(),
+        position: { lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
+        icon: 'spot',
+        ...(placeName !== '' ? { name: placeName } : {}),
+      };
+      commitMarkers([...current, marker]);
+      setMarkerEdit({ id: marker.id, via: 'place' });
+      if (liveMap !== null) centreOnPlacement(liveMap, lat, lon, 16);
+    },
+    [commitMarkers, liveMap],
+  );
+
+  /** The edit sheet's search: move THIS marker to the picked place (naming
+      it after the place if it had no name), and centre the view there. */
+  const moveMarkerToPlace = useCallback(
+    (id: string, lat: number, lon: number, accuracyM: number, label: string) => {
+      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
+      const next = myMarkersRef.current.map((m) => {
+        if (m.id !== id) return m;
+        const { name: existingName, ...rest } = m;
+        const kept =
+          (existingName ?? '').trim() !== ''
+            ? existingName
+            : placeName !== ''
+              ? placeName
+              : undefined;
+        return {
+          ...rest,
+          position: {
+            lat,
+            lon,
+            accuracyM,
+            source: 'manual' as const,
+            takenAt: new Date().toISOString(),
+          },
+          ...(kept !== undefined ? { name: kept } : {}),
+        };
+      });
+      commitMarkers(next);
+      if (liveMap !== null) centreOnPlacement(liveMap, lat, lon, 16);
+    },
+    [commitMarkers, liveMap],
   );
 
   const pickMarkerIcon = useCallback(
@@ -961,6 +1022,9 @@ export function SessionMap({
           if (target !== null) setCard({ id: target, via: 'map' });
         }}
         onPlaceMarker={placeMarker}
+        // Arming the point tool leads with a place search — online only,
+        // withheld quietly otherwise (the tap keeps working alone).
+        {...(online ? { onMarkerSearchPick: placeMarkerFromSearch } : {})}
         onZoneDraw={onZoneDraw}
         zonesFull={zonesFull}
         markersFull={myMarkers.length >= MAX_SESSION_MARKERS}
@@ -982,6 +1046,18 @@ export function SessionMap({
             {editingMarker !== undefined && (
               <div className="map-sheet">
                 <span className="panel-title">What is this spot?</span>
+                {/* The same search every placement flow leads with: a pick
+                    moves this marker to the place (naming it if unnamed)
+                    and centres the view there. Online only. */}
+                {online && (
+                  <PlaceSearch
+                    onPick={(lat, lon, accuracyM, label) =>
+                      moveMarkerToPlace(editingMarker.id, lat, lon, accuracyM, label)
+                    }
+                    failText="Search did not respond — the marker stays where you put it."
+                    emptyText="Nothing found for that. Try adding a town — the marker stays where you put it."
+                  />
+                )}
                 <MarkerIconPicker
                   current={editingMarker.icon}
                   onPick={(icon) => pickMarkerIcon(editingMarker.id, icon)}
