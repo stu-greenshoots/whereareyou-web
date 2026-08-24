@@ -2135,6 +2135,48 @@ body.map-first .header { display: none; }
   opacity: 1;
 }
 
+/* ---- The sharing switch -----------------------------------------------
+   Broadcasting your position is a consent choice you can change at any
+   time, so it gets a full row of the live bar rather than another icon in
+   the crowd: a constant label naming the control, and a state on the right
+   that carries the answer. Green — LIVE — only when it is actually on, and
+   only ever beside the pulsing dot that means the same thing everywhere
+   else in this system. Off is quiet, not alarming: no red, no warning; not
+   sharing is a legitimate way to run a session, not a fault. */
+.share-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  border-left: 4px solid var(--rule-soft);
+}
+/* A full row of the live bar. The specificity has to match
+   `.map-sheet-code .button`, which pins every button in that bar to
+   `flex: 0 1 auto` — without this the switch is squeezed in beside Save. */
+.live-bar .share-switch { flex: 0 0 100%; }
+.share-switch-label { font-weight: var(--weight-medium, 500); }
+.share-switch-state {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+.share-switch-on { border-left-color: var(--live); }
+.share-switch-on .share-switch-state { color: var(--live); }
+/* The dot already carries its own right margin as an inline lead-in; in
+   this pill it sits before a single word, so the gap wants to be tighter. */
+.share-switch-state .live-dot { margin-right: 6px; }
+
+/* On the code screen the same switch heads its own block, with the honest
+   sentence about what the code points at underneath. */
+.share-live-block { display: flex; flex-direction: column; gap: 10px; }
+.share-live-block.is-on { background: var(--live-bg); border-color: var(--live); }
+
 /* A short status line that wraps under the live bar's controls. */
 .live-bar-note {
   flex-basis: 100%;

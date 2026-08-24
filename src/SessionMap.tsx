@@ -68,6 +68,15 @@ import { useResumeFix, useWakeLock } from './wake-lock.js';
  * (share: false — the dispatcher's posture) reads the room but does not
  * speak: the chat composer is withheld, not just disabled.
  *
+ * BROADCASTING IS A SWITCH. The join-time choice ("Join and share my
+ * location" / "Just watch") only sets where it starts; the live bar carries
+ * it from then on, for the OWNER as much as for anyone else. Off tells the
+ * room at once and takes our position out of everybody's roster — present,
+ * not sharing, which is neither a dropped connection nor a quiet phone. The
+ * consequence to keep in mind all through this file: a session can be
+ * running, with a code, markers and zones, and have no live sharer pin at
+ * all. Every surface has to read as that rather than as broken.
+ *
  * Nothing that arrives here is ever logged — chat bodies, zone and marker
  * names, trails and positions are user content, end of story.
  */
@@ -259,8 +268,16 @@ export interface SessionMapProps {
   displayCode: string;
   role: 'owner' | 'joiner';
   updateToken?: string;
-  /** Whether THIS device streams its position (owners always do). */
+  /**
+   * Whether this device STARTS by streaming its position. The join-time
+   * choice ("Join and share my location" / "Just watch") sets it; from here
+   * on it is a switch in the live bar that anyone — the owner included —
+   * may flip either way, at any time.
+   */
   share: boolean;
+  /** Fires whenever the switch moves, so the parent can remember the
+      posture across leaving and re-entering the room. */
+  onSharingChange?: (sharing: boolean) => void;
   name?: string;
   /** This device's account photo, shown on everyone's map. */
   avatar?: string;
@@ -293,6 +310,7 @@ export function SessionMap({
   role,
   updateToken,
   share,
+  onSharingChange,
   name,
   avatar,
   initialPosition,
@@ -311,6 +329,21 @@ export function SessionMap({
   const [ended, setEnded] = useState<'expired' | 'refused' | 'failed' | null>(null);
   const [mySketch, setMySketch] = useState<Sketch | null>(initialSketch);
   const [myPosition, setMyPosition] = useState<Position | null>(null);
+  /**
+   * Whether we are broadcasting our position RIGHT NOW. `share` is only
+   * where this starts: the live bar carries a switch, and it works for the
+   * owner as much as for anyone who joined to watch. Off means the room is
+   * told at once and our position leaves everyone's roster — present, not
+   * sharing — which is a different thing from a dropped connection.
+   */
+  const [sharing, setSharing] = useState(share);
+  /**
+   * Once you have shared a position you are a participant rather than a
+   * watcher, and the chat composer never goes away again. Monotone on
+   * purpose: going dark must not take your voice with it — least of all the
+   * owner's, and least of all mid-conversation.
+   */
+  const [everShared, setEverShared] = useState(share);
   /** The points I placed — claims about the world, never where I am. */
   const [myMarkers, setMyMarkers] = useState<SessionMarker[]>(initialMarkers);
   /** Which of my markers has its edit strip open, and how it opened —
@@ -363,6 +396,8 @@ export function SessionMap({
   const { online } = useSharedConnectivity();
 
   const handleRef = useRef<LiveHandle | null>(null);
+  const sharingRef = useRef(sharing);
+  sharingRef.current = sharing;
   const selfIdRef = useRef<string | null>(null);
   const panelRef = useRef(panel);
   panelRef.current = panel;
@@ -484,11 +519,19 @@ export function SessionMap({
       // not a second person. Never let it stand beside the synthesized self.
       if (role === 'owner' && participant.owner) return;
       registerParticipant(participant);
+      // THEY WENT DARK: connected, and their position has left the roster.
+      // Their path goes with it — the server has already dropped their trail,
+      // and a line left drawn here would be this screen asserting a route for
+      // someone who has stopped sharing one. A DISCONNECTED participant is
+      // the opposite case and keeps both: their last position is history
+      // worth having, and the map ghosts it rather than erasing it.
+      const wentDark = participant.position === undefined && participant.disconnectedAt === undefined;
+      if (wentDark) setTrails((current) => current.filter((trail) => trail.id !== participant.id));
       setParticipants((current) => {
         // Trails arrive in the welcome only; later frames would erase them.
         // Keep what we have and grow it with each new fix, capped like the
         // server's own ring.
-        const kept = participant.trail ?? current[participant.id]?.trail ?? [];
+        const kept = wentDark ? [] : (participant.trail ?? current[participant.id]?.trail ?? []);
         let trail = kept;
         const fix = participant.position;
         if (fix !== undefined) {
@@ -666,9 +709,36 @@ export function SessionMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * The switch. Flipping OFF stops the fixes leaving this device in the
+   * same tick, tells the room (which drops our position from the roster),
+   * and clears our own copy so nothing on this screen keeps drawing us.
+   * Flipping ON resumes: the watch below re-arms and the next fix puts us
+   * back on everyone's map.
+   */
+  const toggleSharing = useCallback(() => {
+    // Side effects stay OUT of the setState updater — React may run an
+    // updater more than once (StrictMode does), and a doubled setShare
+    // would send the room two contradictory frames for one tap.
+    const next = !sharingRef.current;
+    sharingRef.current = next;
+    setSharing(next);
+    handleRef.current?.setShare(next);
+    if (next) {
+      setEverShared(true);
+    } else {
+      setMyPosition(null);
+      // Our own pinned path comes down with our position — the chip in the
+      // legend must never outlive the line it names.
+      const self = selfIdRef.current;
+      if (self !== null) setTrails((current) => current.filter((trail) => trail.id !== self));
+    }
+    onSharingChange?.(next);
+  }, [onSharingChange]);
+
   // Stream our own movement while we said we would.
   useEffect(() => {
-    if (!share || !('geolocation' in navigator)) return;
+    if (!sharing || !('geolocation' in navigator)) return;
     const watch = navigator.geolocation.watchPosition(
       (fix) => {
         const position: Position = {
@@ -685,11 +755,13 @@ export function SessionMap({
       { enableHighAccuracy: true, maximumAge: 10_000 },
     );
     return () => navigator.geolocation.clearWatch(watch);
-  }, [share]);
+  }, [sharing]);
 
   // While we are the one streaming, the screen must not sleep out from under
-  // the share — a locked phone stops producing fixes. Quiet and best-effort.
-  useWakeLock(share && ended === null);
+  // the share — a locked phone stops producing fixes. Quiet and best-effort,
+  // and RELEASED the moment the switch goes off: holding a screen awake for
+  // a stream nobody is sending is battery spent on nothing.
+  useWakeLock(sharing && ended === null);
 
   // Coming back to the foreground: push one fresh fix immediately, so the
   // gap between "screen on" and "my dot moves" closes in a beat instead of
@@ -706,7 +778,7 @@ export function SessionMap({
     setMyPosition(position);
     handleRef.current?.sendPosition(position);
   }, []);
-  useResumeFix(share && ended === null, pushResumeFix);
+  useResumeFix(sharing && ended === null, pushResumeFix);
 
   // The welcome roster is everyone ALREADY here — the server never includes
   // the joining connection itself — so without this, participants[selfId]
@@ -721,7 +793,9 @@ export function SessionMap({
       // grown in applyParticipant: nothing on the wire carries it back to us.
       // Without this, tapping your own pin offers a path toggle that would
       // draw nothing — and the owner is the person most likely to try it.
-      const kept = current[selfId]?.trail ?? [];
+      // Our own path goes the same way everyone else's does when the switch
+      // goes off: nothing left drawn that we are no longer sending.
+      const kept = sharing ? (current[selfId]?.trail ?? []) : [];
       let trail = kept;
       if (myPosition !== null) {
         const last = kept[kept.length - 1];
@@ -747,7 +821,7 @@ export function SessionMap({
       };
       return { ...current, [selfId]: self };
     });
-  }, [selfId, myPosition, role, name, avatar]);
+  }, [selfId, myPosition, role, name, avatar, sharing]);
 
   /** Every committed change to my marker list: state, parent, wire. */
   const commitMarkers = useCallback(
@@ -1057,6 +1131,27 @@ export function SessionMap({
   // ourselves, and `pin` is our own stream there anyway.
   const pinGone = role === 'joiner' && isGone(owner);
 
+  /**
+   * The blue pin has nobody behind it. Two ways that happens, and both must
+   * leave the map honest rather than drawing a phantom:
+   *
+   *  - OUR OWN map with the switch off — we are not sending a position, so
+   *    there is nothing of ours to point at.
+   *  - A JOINER's map where the sharer is in the room but sharing nothing.
+   *    Their session still has a code, markers and zones; it just has no
+   *    live owner pin. Note the deliberate gap: a sharer not in the roster
+   *    at all (not yet welcomed, never opened the room) keeps today's
+   *    behaviour, because `initialPosition` is the position the code
+   *    actually resolves to and that is worth drawing.
+   *
+   * The map still CENTRES on `pin` either way — a view has to open
+   * somewhere, and where the code points is the right somewhere.
+   */
+  const pinAbsent =
+    role === 'owner'
+      ? !sharing
+      : owner !== undefined && !isGone(owner) && owner.position === undefined;
+
   /** participantId → the colour their pinned path is drawn in, if any. */
   const trailColours = useMemo(
     () => Object.fromEntries(trails.map((trail) => [trail.id, trail.colour])),
@@ -1089,7 +1184,7 @@ export function SessionMap({
     // A sharing joiner appears to themselves too — seeing your own dot is
     // how you know the room can see you. Tapping it opens your own card,
     // the same as tapping anyone else's dot.
-    if (role === 'joiner' && share && myPosition !== null) {
+    if (role === 'joiner' && sharing && myPosition !== null) {
       dots.push({
         id: 'self',
         label: name ?? 'Me',
@@ -1104,7 +1199,7 @@ export function SessionMap({
     }
     return dots;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participants, selfId, role, share, myPosition, name, avatar, trailColours, openCard]);
+  }, [participants, selfId, role, sharing, myPosition, name, avatar, trailColours, openCard]);
 
   const placedMarkers = useMemo(() => {
     const points: PlacedMarker[] = [];
@@ -1263,9 +1358,12 @@ export function SessionMap({
   }, [participants, selfId, myMarkers, displayName]);
 
   // Where the compass starts measuring from: my own stream when I have one.
-  // A watcher has no stream — the overlay runs its own fix and says so.
-  const compassSelf =
-    myPosition !== null
+  // With the switch off there IS no stream — not even the owner's opening
+  // position, which by then is only where they used to be — so the overlay
+  // runs its own fix and says so, exactly as it does for a watcher.
+  const compassSelf = !sharing
+    ? null
+    : myPosition !== null
       ? { lat: myPosition.lat, lon: myPosition.lon }
       : role === 'owner'
         ? { lat: initialPosition.lat, lon: initialPosition.lon }
@@ -1353,8 +1451,13 @@ export function SessionMap({
         <span className="person-name">
           {displayName(entry.id)}
           {entry.owner ? <span className="person-tag">sharer</span> : null}
-          {entry.position === undefined && !entry.owner ? (
-            <span className="person-tag person-tag-quiet">watching</span>
+          {/* No position and no dropped connection: they are here and have
+              their sharing switched off. Said the same way whether they
+              never turned it on or turned it back off — the room cannot
+              know which, and does not need to. The OWNER gets it too: this
+              is the tag that stops a positionless sharer reading as broken. */}
+          {entry.position === undefined && !gone ? (
+            <span className="person-tag person-tag-quiet">not sharing</span>
           ) : null}
           {trailColours[entry.id] !== undefined ? (
             <span
@@ -1417,6 +1520,11 @@ export function SessionMap({
         markersFull={myMarkers.length >= MAX_SESSION_MARKERS}
         pinAvatar={pinFace}
         pinDisconnected={pinGone}
+        /* Nobody behind the blue pin: draw no pin rather than one standing
+           where somebody used to be. The tiles, markers, zones, drawings
+           and everyone else's dots are untouched — a session with its
+           sharing off is still a session. */
+        hidePin={pinAbsent}
         // The locate-me control, present on every other map view. On a
         // sharing surface it recentres on the position we already stream
         // (the blue pin / our own dot); a watcher gets the one-shot
@@ -1424,17 +1532,18 @@ export function SessionMap({
         // live bar (bottom) and the zoom control (top-left); the owner's
         // profile float shifts it down a slot via CSS.
         showViewerLocation
-        selfPosition={share ? (myPosition ?? (role === 'owner' ? initialPosition : null)) : null}
+        selfPosition={sharing ? (myPosition ?? (role === 'owner' ? initialPosition : null)) : null}
         /* Follow-mode: the owner's view opens centred on THEMSELVES, so it
            follows from the start; a sharing joiner arrives on the sharer's
            pin — not themselves — so follow waits for the locate control.
-           A watcher has no self on this map at all: they keep the legacy
-           keep-the-pin-in-view framing. */
-        {...(role === 'owner'
-          ? { followSelf: 'on' as const }
-          : share
-            ? { followSelf: 'off' as const }
-            : {})}
+           With the switch off there is no self on this map to follow at
+           all, so the mode stands down and the legacy keep-the-pin-in-view
+           framing takes over — and comes back when the switch does. */
+        {...(!sharing
+          ? {}
+          : role === 'owner'
+            ? { followSelf: 'on' as const }
+            : { followSelf: 'off' as const })}
         viewerAvatar={avatar ?? null}
         onMapReady={setLiveMap}
         fullscreenLocked
@@ -1593,6 +1702,39 @@ export function SessionMap({
                   {role === 'owner' ? 'Back to code' : 'Leave'}
                 </button>
               </div>
+              {/* THE SWITCH. Broadcasting your position is a choice you can
+                  change at any time, so it lives where the room's state
+                  lives, wears its state on its face, and is one tap wide.
+                  Everyone gets it: the owner can run a session without a
+                  live pin, and someone who came in to watch can start
+                  sharing without leaving and rejoining. */}
+              <button
+                type="button"
+                className={`button share-switch ${sharing ? 'share-switch-on' : ''}`}
+                aria-pressed={sharing}
+                onClick={toggleSharing}
+              >
+                <span className="share-switch-label">Sharing my location</span>
+                <span className="share-switch-state">
+                  {sharing ? (
+                    <>
+                      <span className="live-dot" />
+                      On
+                    </>
+                  ) : (
+                    'Off'
+                  )}
+                </span>
+              </button>
+              {/* The sharer is here and sending nothing. Without this the
+                  map reads as broken — no blue pin, no explanation — and a
+                  joiner waits for a position that was never coming. */}
+              {role === 'joiner' && pinAbsent && (
+                <p className="live-bar-note">
+                  The sharer is not sharing a position right now. Everything else on the map is
+                  still theirs.
+                </p>
+              )}
               {/* A live map is savable by anyone in it — the snapshot is taken
                   at save time: the pin as it stands, my drawing, my spots. */}
               <SaveMapButton
@@ -1658,7 +1800,7 @@ export function SessionMap({
               displayName={displayName}
               participants={participants}
               meta={metaRef.current}
-              readOnly={!share}
+              readOnly={!everShared}
               connected={connected && ended === null}
               ended={ended !== null}
               draft={draft}
@@ -1735,11 +1877,17 @@ export function SessionMap({
                   <span className="person-meta">
                     {cardGone
                       ? 'Not connected'
-                      : cardParticipant.owner
-                        ? 'Sharing this session'
-                        : cardParticipant.position !== undefined
-                          ? 'In the session'
-                          : 'Watching'}
+                      : cardParticipant.position === undefined
+                        ? // Here, connected, position switched off. The
+                          // owner keeps their standing said out loud —
+                          // it is still their session — with the plain
+                          // fact beside it.
+                          cardParticipant.owner
+                          ? 'The sharer — not sharing a position'
+                          : 'Not sharing a position'
+                        : cardParticipant.owner
+                          ? 'Sharing this session'
+                          : 'In the session'}
                   </span>
                 </div>
                 <button

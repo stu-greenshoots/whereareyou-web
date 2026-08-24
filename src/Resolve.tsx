@@ -34,6 +34,15 @@ interface HistoryEntry {
   at: number;
 }
 
+/** Wall-clock for the console's provenance facts. Never relative: an
+    operator reading a position back needs a time they can say out loud. */
+function clockTime(iso: string): string {
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime())
+    ? 'unknown'
+    : parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 /** An offline code resolved locally, with no server involved. */
 interface OfflineResult {
   code: string;
@@ -241,6 +250,13 @@ export function Resolve({ onOpenSavedMap }: { onOpenSavedMap: (map: SavedMap) =>
           displayCode={formatCode(session.code)}
           role="joiner"
           share={live.share}
+          /* The switch in the room moved. Remember the posture per code so
+             re-entering resumes as whatever they last chose, rather than
+             re-asking or quietly reverting to the join-time answer. */
+          onSharingChange={(sharing) => {
+            setLive((current) => (current === null ? current : { ...current, share: sharing }));
+            rememberJoinedIdentity(session.code, { share: sharing, name: live.name });
+          }}
           {...(live.name !== '' ? { name: live.name } : {})}
           {...(account.avatar !== null ? { avatar: account.avatar } : {})}
           {...(deepPanel !== null ? { initialPanel: deepPanel } : {})}
@@ -321,7 +337,7 @@ export function Resolve({ onOpenSavedMap }: { onOpenSavedMap: (map: SavedMap) =>
           <strong>This is a live share — you can join it.</strong>
           <span>
             Joining shares your position and your drawings with everyone in it until you leave.
-            Or just watch it move.
+            Or just watch it move. Either way you can turn sharing on or off once you are in.
           </span>
           <div className="notice-actions">
             <button className="button button-primary" onClick={() => openNameStep('share')}>
@@ -625,6 +641,12 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
             {thirdParty ? 'Marked spot' : session.mode === 'live' ? 'Live position' : 'Their position'}
           </span>
           <span>{describeSource(position.source, position.accuracyM)}</span>
+          {/* A live session's position only moves while the sharer is
+              actually sharing, and they may have switched that off. The
+              record has no field saying so, so this says the one thing it
+              CAN prove: when the position last moved. Read it, do not
+              assume it. */}
+          {session.mode === 'live' && <span>Updated {clockTime(session.updatedAt)}</span>}
           <span className="fix-expiry">Expires in {remaining}</span>
         </div>
 
@@ -643,7 +665,12 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
 
         {session.mode === 'live' && (
           <p className="live-indicator">
-            <span className="live-dot" /> They are sharing live — this position can update
+            {/* Deliberately NOT "they are sharing live". Sharing is a switch
+                the caller can turn off at any moment, leaving the code
+                pointing at the last position it was given; this line
+                promises only what the session mode actually guarantees. */}
+            <span className="live-dot" /> Live session — this position updates while they are
+            sharing
           </p>
         )}
       </section>

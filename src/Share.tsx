@@ -12,7 +12,7 @@ import { MarkerPlaceStrip, MarkerStrip } from './MarkerStrip.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
 import { loadActiveShare, persistActiveShare, type ActiveShare } from './local-session.js';
-import { connectLive, newLiveId } from './live.js';
+import { connectLive, newLiveId, type LiveHandle } from './live.js';
 import { NotifyControl } from './Notify.jsx';
 import { CopyRow } from './CopyRow.jsx';
 import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
@@ -197,6 +197,20 @@ export function Share() {
   const [shareName, setShareName] = useState('');
   /** The owner's live map is open over the code screen. */
   const [liveOpen, setLiveOpen] = useState(false);
+  /**
+   * Whether the OWNER is broadcasting their own position. On by default —
+   * that is what pressing the button means — but it is a switch, not a
+   * fate: off leaves the session running with its code, its marked spots
+   * and its zones, and simply no live pin for the owner. Held here rather
+   * than in the live map so it survives closing it, and persisted with the
+   * resume entry so a reload does not quietly resume broadcasting.
+   */
+  const [sharingLive, setSharingLive] = useState(true);
+  const sharingLiveRef = useRef(sharingLive);
+  sharingLiveRef.current = sharingLive;
+  /** The code screen's headless room connection, so the switch can reach it
+      without tearing the socket down and blinking the owner out of the room. */
+  const liveHandleRef = useRef<LiveHandle | null>(null);
   /** Markers placed IN the live map survive leaving it and reloading. */
   const adoptLiveMarkers = useCallback((next: SessionMarker[]) => {
     setMarkers(next);
@@ -232,6 +246,22 @@ export function Share() {
       return updated;
     });
   }, []);
+  /**
+   * The owner's sharing switch moved — from the code screen's own control
+   * or from the live map's. Persisted with the resume entry so the choice
+   * survives closing the map, backgrounding the app and reloading; without
+   * that, coming back would silently start broadcasting again.
+   */
+  const setOwnerSharing = useCallback((next: boolean) => {
+    setSharingLive(next);
+    setResumable((current) => {
+      if (current === null || current.sharing === next) return current;
+      const updated = { ...current, sharing: next };
+      persistActiveShare(updated);
+      return updated;
+    });
+  }, []);
+
   const [liveError, setLiveError] = useState<string | null>(null);
   /** Which sheet panel is open. Hoisted here so browser Back can close it. */
   const [sheetPanel, setSheetPanel] = useState<'none' | 'options' | 'fallback'>('none');
@@ -289,9 +319,13 @@ export function Share() {
   // phone stops producing fixes. Held here while the code screen's headless
   // connection is the one streaming; the live map (SessionMap) holds its own
   // while it is open. Quiet, feature-detected, failure accepted silently.
+  // Gated on the sharing switch as well as the mode: with it off nothing is
+  // streaming, and a screen kept awake for a stream nobody is sending is
+  // battery spent on nothing.
   useWakeLock(
     phase.name === 'shared' &&
       mode === 'live' &&
+      sharingLive &&
       !liveOpen &&
       timeRemaining(phase.session.expiresAt) !== 'expired',
   );
@@ -392,6 +426,8 @@ export function Share() {
     }
     setMode(entry.mode);
     setThirdParty(entry.thirdParty ?? false);
+    // Absent on entries from older builds, which always shared — read as on.
+    setSharingLive(entry.sharing ?? true);
     setSketch(entry.sketch !== null ? decodeSketch(entry.sketch) : null);
     setMarkers(activeShareMarkers(entry));
     setOwnCodeNote(
@@ -693,7 +729,10 @@ export function Share() {
         markerIcon: mintMarkers[0]?.icon ?? 'spot',
         markers: mintMarkers,
         thirdParty,
+        // A fresh code starts sharing: pressing the button is the consent.
+        sharing: true,
       };
+      setSharingLive(true);
       setResumable(active);
       persistActiveShare(active);
       setPhase({ name: 'shared', position, session: result.data, spokenOfflineCode });
@@ -782,7 +821,10 @@ export function Share() {
     const handle = connectLive({
       code: phase.session.code,
       updateToken: phase.session.updateToken,
-      share: true,
+      // Read from the ref, not the state, on purpose: the switch must not
+      // be a dependency of this effect, or flipping it would tear the
+      // socket down and blink the owner out of their own room.
+      share: sharingLiveRef.current,
       ...(trimmedName !== '' ? { name: trimmedName } : {}),
       ...(account.avatar !== null ? { avatar: account.avatar } : {}),
       handlers: {
@@ -807,6 +849,28 @@ export function Share() {
       }
     }
     if (markersRef.current.length > 0) handle.sendMarkers(markersRef.current);
+    liveHandleRef.current = handle;
+
+    return () => {
+      liveHandleRef.current = null;
+      handle.close();
+    };
+    // shareName is read once at connect on purpose — renaming mid-session
+    // must not blip the owner out of their own room.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, mode, liveOpen]);
+
+  // The owner's own fixes, kept SEPARATE from the socket above so the
+  // sharing switch can start and stop the stream without touching the
+  // connection. Off means the watch comes down, the room is told, and this
+  // device sends nothing at all until it goes back on.
+  useEffect(() => {
+    if (phase.name !== 'shared' || mode !== 'live' || liveOpen) return;
+    const handle = liveHandleRef.current;
+    if (handle === null) return;
+    handle.setShare(sharingLive);
+    if (!sharingLive || !('geolocation' in navigator)) return;
+
     const sendFix = (fix: GeolocationPosition): void => {
       handle.sendPosition({
         lat: fix.coords.latitude,
@@ -841,12 +905,8 @@ export function Share() {
       document.removeEventListener('visibilitychange', onVisibility);
       if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
       watchRef.current = null;
-      handle.close();
     };
-    // shareName is read once at connect on purpose — renaming mid-session
-    // must not blip the owner out of their own room.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, mode, liveOpen]);
+  }, [phase, mode, liveOpen, sharingLive]);
 
   const startAgain = useCallback(() => {
     setStopFailure(null);
@@ -859,6 +919,8 @@ export function Share() {
     setIconPickerOpen(false);
     setLiveOpen(false);
     setLiveError(null);
+    // A new run starts from the default: pressing the button shares.
+    setSharingLive(true);
     setPhase({ name: 'idle' });
   }, []);
 
@@ -923,7 +985,8 @@ export function Share() {
           displayCode={formatCode(session.code)}
           role="owner"
           updateToken={session.updateToken}
-          share
+          share={sharingLive}
+          onSharingChange={setOwnerSharing}
           {...(account.name !== ''
             ? { name: account.name }
             : shareName.trim() !== ''
@@ -1171,6 +1234,7 @@ export function Share() {
                       onClick={() => {
                         setMode(resumable.mode);
                         setThirdParty(resumable.thirdParty ?? false);
+                        setSharingLive(resumable.sharing ?? true);
                         setSketch(resumable.sketch !== null ? decodeSketch(resumable.sketch) : null);
                         setMarkers(activeShareMarkers(resumable));
                         setPhase({
@@ -1380,7 +1444,7 @@ export function Share() {
           <strong>You've lost your connection.</strong>
           <span>
             The code above still works — it was handed to the server before the signal went.
-            {mode === 'live' && ' Your position has stopped updating, though.'} If it cannot be
+            {mode === 'live' && sharingLive && ' Your position has stopped updating, though.'} If it cannot be
             found, read out the offline code below instead: that one needs no network at
             either end.
           </span>
@@ -1401,16 +1465,50 @@ export function Share() {
             — not where you are.
           </strong>
           <span>
-            {mode === 'live'
+            {mode === 'live' && sharingLive
               ? 'The marked spot stays where you put it. Your own position is now shared live alongside it.'
               : 'Whoever looks up the code sees the named marker at that spot. Your own position is not shared.'}
           </span>
         </div>
       )}
 
+      {/* THE SWITCH, on the code screen. The same control the live map
+          carries, because the code screen is a live surface too — its
+          headless connection is what streams the owner's position while
+          this screen is up. Off leaves the session entirely intact; the
+          sentence under it says what the code still points at, so nobody
+          is left guessing what they just turned off. */}
       {mode === 'live' && !expired && online && (
-        <div className="notice notice-live">
-          <span className="live-dot" /> Your position is being shared live
+        <div className={`notice share-live-block ${sharingLive ? 'is-on' : ''}`}>
+          <button
+            type="button"
+            className={`button share-switch ${sharingLive ? 'share-switch-on' : ''}`}
+            aria-pressed={sharingLive}
+            onClick={() => setOwnerSharing(!sharingLive)}
+          >
+            <span className="share-switch-label">Sharing my location</span>
+            <span className="share-switch-state">
+              {sharingLive ? (
+                <>
+                  <span className="live-dot" />
+                  On
+                </>
+              ) : (
+                'Off'
+              )}
+            </span>
+          </button>
+          <span>
+            {sharingLive
+              ? 'Anyone holding the code sees your position, and it updates as you move.'
+              : markers[0] !== undefined
+                ? `Your position is not being shared. The code points at ${
+                    (markers[0].name ?? '').trim() !== ''
+                      ? `“${(markers[0].name ?? '').trim()}”`
+                      : 'the spot you marked'
+                  }, which stays exactly where you put it.`
+                : 'Your position is not being shared. The code still points at the position it was given, and will not update while this is off.'}
+          </span>
         </div>
       )}
 

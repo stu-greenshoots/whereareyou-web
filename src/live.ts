@@ -53,6 +53,14 @@ export interface LiveHandlers {
 }
 
 export interface LiveHandle {
+  /**
+   * Flip whether this device broadcasts its position. The hello's `share` is
+   * only its opening value — anyone, the owner included, may go dark and
+   * come back at any time. Turning it OFF tells the room at once (which
+   * drops our position from everyone's roster), stops us sending fixes, and
+   * forgets the last one so a reconnect cannot replay it.
+   */
+  setShare(share: boolean): void;
   sendPosition(position: Position): void;
   /** Replace our whole marker list; [] clears. ≤ MAX_SESSION_MARKERS. */
   sendMarkers(markers: SessionMarker[]): void;
@@ -90,12 +98,17 @@ export function connectLive(options: {
       reason to refuse the join. */
   avatar?: string;
   updateToken?: string;
+  /** Whether we START by broadcasting our position. Not a fate — see
+      `LiveHandle.setShare`. */
   share: boolean;
   handlers: LiveHandlers;
 }): LiveHandle {
   const { code, name, avatar, updateToken, share, handlers } = options;
 
   let socket: WebSocket | null = null;
+  /** The CURRENT sharing posture — `share` is only where it starts. Read at
+      every hello, so a reconnect rejoins as whatever we are now. */
+  let sharing = share;
   let closedByUs = false;
   let ended = false;
   let attempt = 0;
@@ -130,7 +143,7 @@ export function connectLive(options: {
         JSON.stringify({
           type: 'hello',
           code,
-          share,
+          share: sharing,
           ...(name !== undefined && name !== '' ? { name } : {}),
           ...(avatar !== undefined && avatar !== '' ? { avatar } : {}),
           ...(updateToken !== undefined ? { updateToken } : {}),
@@ -222,7 +235,24 @@ export function connectLive(options: {
   connect();
 
   return {
+    setShare(next) {
+      if (sharing === next) return;
+      sharing = next;
+      // Going dark forgets the last fix on the spot. Without this the
+      // rejoin replay would put us straight back on everyone's map the next
+      // time the socket blinks — a consent choice undone by a lift shaft.
+      if (!next) lastPosition = null;
+      // Not a protocol message type yet — the api reads it off the raw
+      // frame (see parseShareFrame there). A server that does not know it
+      // ignores the frame under the tolerance rule, which degrades to
+      // today's behaviour rather than breaking the room.
+      send({ type: 'share', share: next });
+    },
     sendPosition(position) {
+      // Belt for the race between flipping the switch off and a geolocation
+      // callback already in flight: a fix we have stopped sharing never
+      // leaves this device.
+      if (!sharing) return;
       lastPosition = position;
       send({ type: 'position', position });
     },

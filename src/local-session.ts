@@ -39,6 +39,14 @@ export interface ActiveShare {
    * Absent on entries written by older builds — read as false.
    */
   thirdParty?: boolean;
+  /**
+   * Whether the owner is broadcasting their own position on this session.
+   * Kept because turning it OFF is a consent choice, and coming back to the
+   * code screen (a reload, a trip to another app) must not quietly resume
+   * broadcasting behind them. Absent on entries written by older builds —
+   * read as TRUE, which is exactly what those builds were doing.
+   */
+  sharing?: boolean;
 }
 
 const ACTIVE_KEY = 'activeShare';

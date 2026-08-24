@@ -828,6 +828,13 @@ export function Map({
   anchorRef.current = sketchAnchor ?? { lat, lon };
 
   const [fullscreen, setFullscreen] = useState(false);
+  /**
+   * Whether this surface has EVER had a pin. Latched on purpose: the jump to
+   * street level below is the wide-open start map getting its first fix, and
+   * it must fire once. `hidePin` can now go back and forth on a live map
+   * (the sharing switch), and re-firing it there would snatch the camera off
+   * whatever the viewer had panned to every time somebody resumed.
+   */
   const hadPinRef = useRef(!hidePin);
 
   // Follow-mode. The mode lives in state (the locate control renders its
@@ -1010,8 +1017,21 @@ export function Map({
   // Sync marker, accuracy circle and trail to the current position.
   useEffect(() => {
     if (map === null) return;
-    // The start map has no position yet — tiles only, nothing to sync.
-    if (hidePin) return;
+    // Nothing to point at — the start map before its first fix, or a live
+    // surface whose sharer has switched their position off. Whatever is
+    // already drawn comes DOWN: an early return here left the last pin,
+    // ring and path lying on the map asserting a position nobody is
+    // sending any more (measured — the sharer's face stayed put after the
+    // switch went off, which is the exact lie this must not tell).
+    if (hidePin) {
+      markerRef.current?.remove();
+      markerRef.current = null;
+      circleRef.current?.remove();
+      circleRef.current = null;
+      trailRef.current?.remove();
+      trailRef.current = null;
+      return;
+    }
 
     // Amber for a reported (third-party) location, blue for the sharer's own.
     // A dispatcher confusing "where the caller is" with "where they say the
@@ -1557,7 +1577,9 @@ export function Map({
       if (followAvailable) setFollow(true);
       moveCamera(() => map.setView([lat, lon], 17, { animate: false }));
     }
-    hadPinRef.current = !hidePin;
+    // Latched, never cleared — see the ref's own note. A pin that goes away
+    // and comes back (the sharing switch) is not a first fix.
+    if (!hidePin) hadPinRef.current = true;
     // setFollow/moveCamera only write refs and state; they cannot go stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, hidePin, lat, lon]);
