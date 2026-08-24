@@ -9,7 +9,6 @@ import { SaveMapButton } from './SaveMap.jsx';
 import { useSharedConnectivity } from './connectivity.js';
 import { Map, disarmPointTool, releaseFollow } from './Map.jsx';
 import { MarkerPlaceStrip, MarkerStrip } from './MarkerStrip.jsx';
-import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import { Brand } from './Brand.jsx';
 import { SessionMap, panelFromFragment, type LivePanel } from './SessionMap.jsx';
 import { loadActiveShare, persistActiveShare, type ActiveShare } from './local-session.js';
@@ -528,58 +527,6 @@ export function Share() {
     setPhase({ name: 'located', position: { ...DEMO_POSITION, takenAt: new Date().toISOString() } });
   }, [stopAcquire]);
 
-  /**
-   * A picked search result, from either of the located map's search fields
-   * (the report-elsewhere lead-in, the marker strip's search glyph).
-   * Searching IS marking: the result lands as the named diamond (the place's
-   * name as the default, still editable) and the strip opens on it. The
-   * camera does NOT move — the off-screen edge pills point at a marker that
-   * lands out of view, which is the whole reason they exist. Follow-mode
-   * still goes down: the placement is user intent, and the next fix must not
-   * snap the view back to self.
-   */
-  const searchPick = useCallback(
-    (lat: number, lon: number, accuracyM: number, label: string) => {
-      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
-      // A picked place is a handy default name for the history.
-      if (shareName.trim() === '' && placeName !== '') setShareName(placeName);
-      const spot: Position = {
-        lat,
-        lon,
-        accuracyM,
-        source: 'manual',
-        takenAt: new Date().toISOString(),
-      };
-      setMarkers((current) => [
-        {
-          id: current[0]?.id ?? newLiveId(),
-          position: spot,
-          icon: current[0]?.icon ?? 'spot',
-          ...((current[0]?.name ?? placeName) !== ''
-            ? { name: current[0]?.name ?? placeName }
-            : {}),
-        },
-      ]);
-      setIconPickerOpen(true);
-      if (locatedMapRef.current !== null) {
-        releaseFollow(locatedMapRef.current);
-        // A pick placed (or moved) the spot — the armed point tool, if it
-        // was how the strip opened, has nothing left to do.
-        disarmPointTool(locatedMapRef.current);
-      }
-      // In the report-elsewhere flow the code points AT the marker, so the
-      // session position follows it — and the GNSS refinement stops so a
-      // late fix cannot drag it back off the chosen spot. Sharing where YOU
-      // are, the searched place is only a marked spot: your own pin, and
-      // its refinement, stay untouched.
-      if (thirdParty) {
-        stopAcquire();
-        setPhase({ name: 'located', position: spot });
-      }
-    },
-    [shareName, thirdParty, stopAcquire],
-  );
-
   /** Reuse a past share: back onto the located screen with everything set. */
   const reuseShare = useCallback(
     (entry: PastShare) => {
@@ -1036,6 +983,12 @@ export function Share() {
           thirdParty={thirdParty}
           pinAvatar={thirdParty ? null : account.avatar}
           offline={!online}
+          /* Place search, as a permanent map control — top-left under the
+             zoom, whether the caller is sharing where they are or reporting
+             somewhere else. It moves the VIEW and marks nothing: a spot is
+             still marked by tapping the map. Withheld while offline, quietly
+             — a field that cannot answer is worse than none. */
+          placeSearch={online}
           locating={acquiring}
           sketch={located ? sketch : null}
           fullscreenLocked
@@ -1182,7 +1135,6 @@ export function Share() {
                 online={online}
                 sketch={sketch}
                 thirdParty={thirdParty}
-                onSearchPick={searchPick}
                 note={note}
                 setNote={setNote}
                 name={shareName}
@@ -1659,7 +1611,6 @@ function LocatedSheet({
   online,
   sketch,
   thirdParty,
-  onSearchPick,
   note,
   setNote,
   name,
@@ -1687,7 +1638,6 @@ function LocatedSheet({
   online: boolean;
   sketch: Sketch | null;
   thirdParty: boolean;
-  onSearchPick: (lat: number, lon: number, accuracyM: number, label: string) => void;
   note: string;
   setNote: (value: string) => void;
   name: string;
@@ -1709,18 +1659,14 @@ function LocatedSheet({
   // button and the readout come straight back — in the report-elsewhere flow
   // that is where "the code points here" appears once the spot exists.
   // Before anything is placed (the armed point tool), the strip's
-  // pre-placement state carries the hint and the search, so searching can
-  // come before the first tap; a pick or a tap lands the spot and the same
-  // open strip becomes its edit mode.
+  // pre-placement state carries the hint alone. Getting to the right part of
+  // the map first is the map's own search control's job now, not the strip's.
   if (iconPickerOpen && marker === null) {
     return (
       <MarkerPlaceStrip
         hint={
           thirdParty ? 'Tap the map to mark the spot you mean.' : 'Tap the map to mark the spot.'
         }
-        onSearchPick={online ? onSearchPick : undefined}
-        searchFailText="Search did not respond — you can still tap the map to mark the spot."
-        searchEmptyText="Nothing found for that. Try adding a town, or tap the map to mark the spot."
         onDone={onCloseIconPicker}
       />
     );
@@ -1734,31 +1680,12 @@ function LocatedSheet({
         onNameChange={onNameMarker}
         onDone={onCloseIconPicker}
         onRemove={onRemoveMarker}
-        onSearchPick={online ? onSearchPick : undefined}
-        searchFailText="Search did not respond — you can still tap the map to move the spot."
-        searchEmptyText="Nothing found for that. Try adding a town, or tap the map."
       />
     );
   }
 
   return (
     <div className="map-sheet">
-      {/* Reporting somewhere else usually starts with a name, not a drag —
-          the search leads that flow (and only with a connection). While a
-          spot is being placed the strip above carries its own search. */}
-      {thirdParty && online && (
-        <PlaceSearch
-          onPick={onSearchPick}
-          failText="Search did not respond — you can still tap the map to mark the spot."
-          emptyText="Nothing found for that. Try adding a town, or tap the map to mark the spot."
-        />
-      )}
-      {thirdParty && !online && (
-        <p className="offline-gate">
-          Place search needs a connection — you can still tap the map to mark the spot instead.
-        </p>
-      )}
-
       {!online && ((sketch !== null && sketch.shapes.length > 0) || marker !== null) && (
         <div className="notice notice-offline">
           {thirdParty ? (
@@ -1799,9 +1726,14 @@ function LocatedSheet({
       )}
 
       {/* No marker yet in the report-elsewhere flow: the way forward is the
-          whole message, because nothing can be shared until a spot exists. */}
+          whole message, because nothing can be shared until a spot exists.
+          Two steps now, said in order — the search moves the map, the tap
+          marks the spot; the search never marks anything itself. */}
       {thirdParty && marker === null && (
-        <p className="marker-row">Search for a place, or tap the map to mark the spot you mean.</p>
+        <p className="marker-row">
+          Tap the map to mark the spot you mean. The search at the top left moves the map there
+          first.
+        </p>
       )}
 
       {/* A GNSS fix that settled poor. Manual pins are excluded — they are as

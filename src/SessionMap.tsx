@@ -33,7 +33,6 @@ import {
 } from './Compass.jsx';
 import { connectLive, newLiveId, type LiveHandle, type LiveHandlers, type LiveWelcome } from './live.js';
 import { useSharedConnectivity } from './connectivity.js';
-import { placeShortName } from './PlaceSearch.jsx';
 import {
   Map,
   disarmPointTool,
@@ -271,7 +270,7 @@ export function SessionMap({
   const markerEditRef = useRef(markerEdit);
   markerEditRef.current = markerEdit;
   /** The point tool is armed but nothing is placed yet — the pre-placement
-      strip is up, carrying the hint and the search-before-first-placement. */
+      strip is up, carrying the hint and the way out. */
   const [placingMarker, setPlacingMarker] = useState(false);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
@@ -690,41 +689,6 @@ export function SessionMap({
     [moveMarker, placeMarker],
   );
 
-  /** The marker strip's search: move THIS marker to the picked place,
-      naming it after the place if it had no name. The camera stays put —
-      the off-screen edge pills point at a marker that lands out of view —
-      but follow still goes down, so a streaming fix cannot snap the view
-      back to self while the spot is being edited. */
-  const moveMarkerToPlace = useCallback(
-    (id: string, lat: number, lon: number, accuracyM: number, label: string) => {
-      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
-      const next = myMarkersRef.current.map((m) => {
-        if (m.id !== id) return m;
-        const { name: existingName, ...rest } = m;
-        const kept =
-          (existingName ?? '').trim() !== ''
-            ? existingName
-            : placeName !== ''
-              ? placeName
-              : undefined;
-        return {
-          ...rest,
-          position: {
-            lat,
-            lon,
-            accuracyM,
-            source: 'manual' as const,
-            takenAt: new Date().toISOString(),
-          },
-          ...(kept !== undefined ? { name: kept } : {}),
-        };
-      });
-      commitMarkers(next);
-      if (liveMap !== null) releaseFollow(liveMap);
-    },
-    [commitMarkers, liveMap],
-  );
-
   const pickMarkerIcon = useCallback(
     (id: string, icon: MarkerIcon) => {
       commitMarkers(myMarkersRef.current.map((m) => (m.id === id ? { ...m, icon } : m)));
@@ -760,33 +724,6 @@ export function SessionMap({
     commitMarkerNames();
     setMarkerEdit(null);
   }, [commitMarkerNames]);
-
-  /** The pre-placement strip's search: the marker does not exist yet, so a
-      pick PLACES it — named after the place, still editable — and the strip
-      hands over to edit mode. The point tool's job is done, so it goes
-      down; the camera stays put, and follow goes down with it so the next
-      streaming fix cannot snap the view off the spot being edited. */
-  const placeMarkerFromSearch = useCallback(
-    (lat: number, lon: number, accuracyM: number, label: string) => {
-      const current = myMarkersRef.current;
-      if (current.length >= MAX_SESSION_MARKERS) return;
-      const placeName = placeShortName(label, MAX_MARKER_NAME_CHARS);
-      const marker: SessionMarker = {
-        id: newLiveId(),
-        position: { lat, lon, accuracyM, source: 'manual', takenAt: new Date().toISOString() },
-        icon: 'spot',
-        ...(placeName !== '' ? { name: placeName } : {}),
-      };
-      commitMarkers([...current, marker]);
-      setMarkerEdit({ id: marker.id, via: 'place' });
-      setPlacingMarker(false);
-      if (liveMap !== null) {
-        disarmPointTool(liveMap);
-        releaseFollow(liveMap);
-      }
-    },
-    [commitMarkers, liveMap],
-  );
 
   /** The point tool arming or disarming. Arming over an open edit commits
       it — one mode at a time — and puts follow down (a strip is about to
@@ -1267,6 +1204,12 @@ export function SessionMap({
           const target = role === 'owner' ? selfId : (owner?.id ?? null);
           if (target !== null) setCard({ id: target, via: 'map' });
         }}
+        /* Place search, as a permanent map control — top-left under the zoom,
+           on the owner's map, a joiner's and a watcher's alike. It moves the
+           VIEW and nothing else; marking a spot is still the point tool's
+           job. Withheld while the resolver looks unreachable: a field that
+           cannot answer is worse than none. */
+        placeSearch={online}
         onPlaceMarker={placeOrMoveMarker}
         /* Edit mode: while a marker's strip is open, a plain tap moves that
            marker — the tap only regains its usual meaning (nothing) once
@@ -1307,13 +1250,7 @@ export function SessionMap({
                 search is available BEFORE the first tap. The edit strip
                 below wins the moment a marker exists. */}
             {editingMarker === undefined && placingMarker && (
-              <MarkerPlaceStrip
-                hint="Tap the map to place the point."
-                onSearchPick={online ? placeMarkerFromSearch : undefined}
-                searchFailText="Search did not respond — you can still tap the map to place the point."
-                searchEmptyText="Nothing found for that. Try adding a town, or tap the map to place the point."
-                onDone={closePlacing}
-              />
+              <MarkerPlaceStrip hint="Tap the map to place the point." onDone={closePlacing} />
             )}
             {editingMarker !== undefined && (
               <MarkerStrip
@@ -1323,14 +1260,6 @@ export function SessionMap({
                 onNameChange={(value) => renameMarkerLocal(editingMarker.id, value)}
                 onDone={closeMarkerEdit}
                 onRemove={() => removeMarker(editingMarker.id)}
-                onSearchPick={
-                  online
-                    ? (lat, lon, accuracyM, label) =>
-                        moveMarkerToPlace(editingMarker.id, lat, lon, accuracyM, label)
-                    : undefined
-                }
-                searchFailText="Search did not respond — the marker stays where you put it."
-                searchEmptyText="Nothing found for that. Try adding a town — the marker stays where you put it."
                 // "Open in maps" belongs to revisiting a marker, not to the
                 // placement step — placement is about naming the spot, not
                 // leaving for another app.

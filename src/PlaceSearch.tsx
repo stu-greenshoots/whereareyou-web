@@ -8,10 +8,11 @@ import { useState } from 'react';
  * place up, never for their own position — and every surface that mounts it
  * withholds it while offline rather than offering a field that cannot answer.
  *
- * Started life inside the report-somewhere-else flow; now it fronts every
- * marker placement (the share screen's spot sheet, the live room's point
- * tool and marker sheet), so the two fallback lines are per-surface — each
- * screen says what its own way forward is.
+ * Started life inside the report-somewhere-else flow, then fronted every
+ * marker placement. It does neither now: it is the field inside the map's
+ * own search control (see Map.tsx), where a pick moves the VIEW and marks
+ * nothing. The two fallback lines stay per-caller so whoever mounts it can
+ * say what its own way forward is.
  */
 export function PlaceSearch({
   onPick,
@@ -88,7 +89,8 @@ export function PlaceSearch({
         <input
           className="note-input"
           type="search"
-          placeholder="Search for a place or address"
+          aria-label="Search for a place"
+          placeholder="Search for a place"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -122,7 +124,7 @@ export function PlaceSearch({
 }
 
 /** The place's own short name — the bit before Nominatim's first comma —
-    sized to fit a marker-name field. */
+    trimmed to fit wherever it is being said back ("Moved to …"). */
 export function placeShortName(label: string, maxChars: number): string {
   return (label.split(',')[0] ?? '').trim().slice(0, maxChars);
 }

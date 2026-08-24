@@ -627,6 +627,95 @@
 @keyframes locate-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .map-locate svg.locating { animation: none; } }
 
+/* ---- Place search, as a map control ------------------------------------
+   Top-LEFT, directly under Leaflet's zoom buttons (which end at ~74px: two
+   30px buttons plus a 2px border, 10px down). Every other edge is spoken
+   for on at least one surface — the account control and the two locate
+   buttons stack down the right, the tools/strips/live bar own the foot, and
+   the share screen's wordmark sits top centre — so this is the one position
+   that is free on all of them, which is what lets the control live in the
+   same place everywhere.
+
+   Same surface conventions as .map-locate: a flat panel, a soft rule, one
+   small shadow to lift it off the tiles, and the accent for the glyph. */
+.map-search-toggle {
+  position: absolute;
+  top: 82px;
+  left: 10px;
+  z-index: 700;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 1px 6px #0003;
+}
+.map-search-toggle:hover { background: var(--surface-2); }
+.map-search-toggle svg { width: 22px; height: 22px; }
+/* Open is a visible state — the same filled-accent treatment as an active
+   tool, so the glyph reads as "this is what is showing", not just "tapped". */
+.map-search-open { background: var(--accent); border-color: var(--accent); color: #fff; }
+.map-search-open:hover { background: var(--accent); filter: brightness(1.1); }
+
+/* The field opens BELOW its own glyph, never over it: the way out stays
+   visible and in the same place. `right` stops it short of the right-hand
+   control column rather than covering it, and the height is capped to the
+   room actually left above the bottom stack — whose live height the map
+   publishes as --map-bottom-h, because the toolbar wraps to two rows at
+   320px and the strips come and go. The 120px floor is for the genuinely
+   squeezed case (a short phone with the toolbar, a strip AND the live bar
+   all up): a field you can still type in, sitting over the tools rather
+   than clipped away behind them, which is why it outranks them by one. */
+.map-search-panel {
+  position: absolute;
+  top: 128px;
+  left: 10px;
+  right: 58px;
+  z-index: 701;
+  display: flex;
+  flex-direction: column;
+  max-width: 420px;
+  max-height: max(120px, calc(100% - 138px - var(--map-bottom-h, 0px)));
+  padding: 10px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 2px 10px #0004;
+}
+/* The row keeps its size; the results take what is left and scroll. */
+.map-search-panel .place-search { flex: 1 1 auto; min-height: 0; }
+.map-search-panel .place-search-row { flex-shrink: 0; }
+.map-search-panel .place-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin-bottom: 0;
+}
+
+/* Where the map just went. Takes the panel's place (the two never show at
+   once) and clears itself after a few seconds. */
+.map-search-note {
+  position: absolute;
+  top: 128px;
+  left: 10px;
+  z-index: 700;
+  margin: 0;
+  max-width: 220px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-dim);
+  box-shadow: 0 1px 6px #0003;
+}
+
 /* Accuracy of the current fix, shown before the sender commits to it. */
 .accuracy-readout {
   margin: -6px 0 0;

@@ -16,6 +16,7 @@ import {
   type OffscreenIndicatorsHandle,
   type OffscreenTarget,
 } from './offscreen-indicators.js';
+import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import { SKETCH_INKS, attachSketch, type SketchHandle } from './sketch-layer.js';
 import {
   beginStroke,
@@ -456,6 +457,18 @@ export interface MapProps {
    * surface.
    */
   tiles?: TileVariant;
+  /**
+   * Shows the place-search control: a persistent map control, top-left under
+   * the zoom buttons, on every surface that sets it. It belongs to the MAP,
+   * not to any marker flow — picking a result moves the VIEW there and does
+   * nothing else (no marker is placed, nothing is renamed); whoever wants a
+   * spot marked places one themselves with the point tool.
+   *
+   * Surfaces pass their own connectivity here and withhold it while offline,
+   * quietly: a field that cannot answer is worse than none. `offline` hides
+   * it too — a map with no tiles has no search either.
+   */
+  placeSearch?: boolean;
   /** When set, shows a "locate me" control that re-fetches the live position. */
   onLocate?: () => void;
   /** Whether a locate request is in flight — the control shows a busy state. */
@@ -620,6 +633,7 @@ export function Map({
   trail,
   offline = false,
   tiles = 'voyager',
+  placeSearch = false,
   onLocate,
   locating = false,
   sketch = null,
@@ -720,6 +734,12 @@ export function Map({
       programmaticMovesRef.current -= 1;
     }
   };
+
+  // The place-search control. Collapsed it is one glyph; open it is a field
+  // and its results. `flewTo` is the receipt for a camera move that has
+  // already happened — see flyToPlace.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [flewTo, setFlewTo] = useState<string | null>(null);
 
   const [viewerBusy, setViewerBusy] = useState(false);
   const [viewerNote, setViewerNote] = useState<string | null>(null);
@@ -1339,12 +1359,53 @@ export function Map({
     };
   }, [fullscreen]);
 
+  // How tall the bottom overlay stack is right now, published to CSS as
+  // `--map-bottom-h`. The search panel hangs from the TOP of the map and must
+  // not grow down into the toolbar, the marker strips and the live bar — and
+  // only the DOM knows how tall those are from moment to moment (the toolbar
+  // wraps to two rows at 320px; a strip appears and disappears). This is the
+  // same measurement `centreOnPlacement` takes for the camera, kept live.
+  useEffect(() => {
+    if (map === null) return;
+    const frame = map.getContainer().parentElement;
+    if (frame === null) return;
+    const stack = frame.querySelector('.map-bottom-stack');
+    if (!(stack instanceof HTMLElement)) return;
+    const publish = () => frame.style.setProperty('--map-bottom-h', `${stack.offsetHeight}px`);
+    // Measured outright every time the panel opens, as well as watched while
+    // it is: a ResizeObserver only delivers during the rendering lifecycle,
+    // which a hidden page never runs (the same trap the creation effect's
+    // invalidateSize falls into), and the height has to be right at the
+    // moment the panel appears.
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(stack);
+    return () => observer.disconnect();
+  }, [map, searchOpen]);
+
   // The "could not locate you" note clears itself.
   useEffect(() => {
     if (viewerNote === null) return;
     const timer = window.setTimeout(() => setViewerNote(null), 5000);
     return () => window.clearTimeout(timer);
   }, [viewerNote]);
+
+  // So does the "moved to X" one: it is a receipt for a camera move that has
+  // already happened, not a state the map is in.
+  useEffect(() => {
+    if (flewTo === null) return;
+    const timer = window.setTimeout(() => setFlewTo(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [flewTo]);
+
+  // Signal dies with the field open: fold it away rather than leaving a box
+  // that cannot answer, and do not spring it open again when signal returns.
+  const searchAvailable = placeSearch && !offline;
+  useEffect(() => {
+    if (searchAvailable) return;
+    setSearchOpen(false);
+    setFlewTo(null);
+  }, [searchAvailable]);
 
   // The moment the wide-open start map gets its first real fix, jump to
   // street level — the view change IS the feedback that locating worked.
@@ -1536,6 +1597,65 @@ export function Map({
     });
   };
 
+  /**
+   * A picked search result. This is NAVIGATION and nothing else: the view
+   * moves to the place, no marker is dropped, nothing is renamed. Searching
+   * used to BE marking — it fronted every placement flow and named the
+   * marker after the place. It no longer does: the search belongs to the
+   * map, and the point tool is the only thing here that makes a claim about
+   * the world.
+   *
+   * Follow-mode goes down through the same `releaseFollow` path a finger-pan
+   * uses, because deliberately going to look somewhere else is exactly the
+   * gesture that means "stop tracking me" — without it the next streaming fix
+   * would yank the view straight back off the place just asked for.
+   *
+   * Always a jump-cut, never a glide, for the reason `centreOnPlacement`
+   * gives: `event.latlng` is unreliable while an animation runs, and arriving
+   * somewhere is often followed immediately by a tap.
+   */
+  const flyToPlace = (lat: number, lon: number, accuracyM: number, label: string) => {
+    if (map === null) return;
+    setSearchOpen(false);
+    releaseFollow(map);
+    const size = map.getSize();
+    const stack = map.getContainer().parentElement?.querySelector('.map-bottom-stack');
+    const covered = stack instanceof HTMLElement ? Math.min(stack.offsetHeight, size.y) : 0;
+    // Frame the PLACE at its own scale — a named building arrives at street
+    // level, a whole town opens out — rather than pretending every result
+    // deserves the same zoom. The result carries its own honest extent (half
+    // its bounding-box diagonal); clamped both ways so a coarse answer never
+    // flings the map to county scale and a fine one never claims more
+    // precision than a hand placement could.
+    //
+    // Only when the container has actually been measured, though. Leaflet
+    // caches the size it read at creation, and a map laid out while hidden
+    // keeps a zero until something calls invalidateSize — a real state on
+    // this map, which re-measures from an animation frame a hidden page never
+    // gets (see the creation effect). Framing off a zero size makes
+    // getBoundsZoom return 0, which would silently fling every search to the
+    // widest zoom this allows. Measured: `{x: 350, y: 0}` → zoom 12 for a
+    // cathedral. Keep the zoom the person is already on instead — going to
+    // the right place at the wrong scale is recoverable; the guess is not.
+    const measured = size.x > 0 && size.y > 0;
+    const span = L.latLng(lat, lon).toBounds(Math.max(120, accuracyM * 6));
+    const zoom = measured
+      ? Math.min(17, Math.max(12, map.getBoundsZoom(span, false)))
+      : map.getZoom();
+    // Land in the middle of what the person can SEE: the bottom overlay stack
+    // (toolbar, strips, the live bar) covers the foot of the map.
+    const offset = Math.max(0, Math.min(covered / 2, size.y / 2 - 44));
+    const centre = map.unproject(
+      map.project(L.latLng(lat, lon), zoom).add(L.point(0, Math.round(offset))),
+      zoom,
+    );
+    moveCamera(() => map.setView(centre, zoom, { animate: false }));
+    // Say where it went. A map that jumps without a word is disorienting, and
+    // this is also where the person can see that nothing was marked.
+    const name = placeShortName(label, 40);
+    setFlewTo(name !== '' ? name : null);
+  };
+
   // The pin-locate control. On follow surfaces it is also the ONE way back
   // into follow-mode: recentre on self now, resume following, then let the
   // parent refresh the fix.
@@ -1651,6 +1771,42 @@ export function Map({
       {/* `map-tiles-dark` scopes the legibility filter to the tile pane of
           dark basemaps only — see styles.css for why Dark Matter needs it. */}
       <div ref={containerRef} className={`${className ?? 'map'}${tiles === 'dark' ? ' map-tiles-dark' : ''}`} />
+
+      {/* Place search — top-LEFT, tucked under Leaflet's zoom buttons. The
+          right-hand column is spoken for on every surface (the account
+          control, then locate, then the viewer's own locate), the foot of the
+          map belongs to the tools and the live bar, and the top centre
+          carries the wordmark on the share screen. This is the one edge that
+          is free everywhere, so the control sits in the same place on all of
+          them. */}
+      {searchAvailable && (
+        <>
+          <button
+            type="button"
+            className={`map-search-toggle ${searchOpen ? 'map-search-open' : ''}`}
+            aria-label="Search for a place"
+            aria-expanded={searchOpen}
+            title="Search for a place"
+            onClick={() => {
+              setFlewTo(null);
+              setSearchOpen((open) => !open);
+            }}
+          >
+            <SearchIcon />
+          </button>
+          {searchOpen && (
+            <div className="map-search-panel">
+              <PlaceSearch
+                onPick={flyToPlace}
+                failText="Search did not respond — you can still pan and zoom the map yourself."
+                emptyText="Nothing found for that. Try adding a town."
+              />
+            </div>
+          )}
+          {!searchOpen && flewTo !== null && <p className="map-search-note">Moved to {flewTo}</p>}
+        </>
+      )}
+
       {onLocate !== undefined && (
         <button
           type="button"
@@ -1906,6 +2062,25 @@ function CollapseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** A plain magnifier — geometric strokes in currentColor, like every other
+    functional glyph on the map chrome. */
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <line
+        x1="15.4"
+        y1="15.4"
+        x2="21"
+        y2="21"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
