@@ -1976,6 +1976,103 @@ body.map-first .header { display: none; }
   color: var(--text-dim);
 }
 .live-card-trail { margin: 0; font-size: 12px; color: var(--text-dim); }
+
+/* ---- Pinned paths ------------------------------------------------------ */
+/* A person's recent path, kept on the map after their card closes. The card
+   used to draw the path and then sit on top of it, which made it useless —
+   so the path now outlives the card and comes down deliberately.
+
+   Several paths can be up at once, which is the whole reason any of this is
+   coloured. The colour is NOT a semantic: amber, green, indigo, blue and red
+   are spoken for (reported / live / offline / caller / error) and a path
+   borrows none of them. It is a series key, and like any series key it is
+   worthless without a legend — so the colour never appears alone. It shows
+   up in exactly three places, all of them naming a person: the chip in the
+   legend, the ring on their dot, and the toggle in their card. */
+.trail-swatch {
+  display: inline-block;
+  align-self: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 4px;
+  /* Dotted, echoing how the line is actually drawn on the tiles. */
+  background-image: radial-gradient(circle, var(--trail-colour) 1.5px, transparent 1.6px);
+  background-size: 6px 4px;
+}
+
+/* The near end of a pinned path: their marker wears a ring of its colour, so
+   a line on the map can be traced back to a face without counting dots. Sits
+   outside the dark hairline that keeps every marker's silhouette, so it never
+   eats the casing that makes these legible on busy tiles. */
+.pin.marker-trailed {
+  box-shadow:
+    0 0 0 1.5px #0f172a80,
+    0 0 0 4.5px var(--trail-colour),
+    0 2px 8px #0007;
+}
+.peer-dot.marker-trailed {
+  box-shadow:
+    0 0 0 1.5px #0f172a80,
+    0 0 0 4px var(--trail-colour),
+    0 2px 6px #0006;
+}
+
+/* The legend, above the live bar. Present exactly when a path is, and it
+   answers both questions a coloured line raises at once: whose is it, and
+   how do I put it away. Tapping a chip removes that path — the × is the
+   affordance, the whole chip is the target. */
+.trail-legend {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-height: none;
+  overflow: visible;
+  padding: 8px 10px;
+}
+.trail-legend-label {
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.trail-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.trail-chip:hover { background: var(--surface); border-color: var(--accent); }
+.trail-chip-name {
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trail-chip-x { color: var(--text-dim); font-size: 12px; }
+.trail-hide-all { margin-left: auto; padding: 8px 6px; }
+
+/* The toggle inside a participant card. Says what the tap will DO, never
+   what is currently true — the map is already showing that. */
+.live-card-path {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+}
 .live-card-events {
   display: flex;
   flex-direction: column;

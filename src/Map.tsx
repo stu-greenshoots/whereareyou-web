@@ -159,14 +159,32 @@ export function isSafeAvatar(avatar: string | undefined): avatar is string {
 // visually different from a self-report, which matters (see below).
 // An avatar sits INSIDE the ring; the ring keeps its colour, because the
 // colour is the information (blue = the caller) and the photo is only a face.
-function pinIcon(colour: string, avatar?: string, disconnected = false): L.DivIcon {
+/**
+ * Path colours are ours, not the room's — but they land in a `style`
+ * attribute built by string concatenation, so they go through the same gate
+ * every other interpolated value on this map does. Plain hex only.
+ */
+function safeColour(colour: string | null | undefined): string | null {
+  return colour != null && /^#[0-9a-fA-F]{6}$/.test(colour) ? colour : null;
+}
+
+function pinIcon(
+  colour: string,
+  avatar?: string,
+  disconnected = false,
+  trailColour?: string | null,
+): L.DivIcon {
   const img = avatarImg(avatar);
+  const trail = safeColour(trailColour);
   const classes = ['pin'];
   if (img !== null) classes.push('pin-has-avatar');
   if (disconnected) classes.push('marker-gone');
+  // The pinned-path ring: this marker is the near end of a dotted line
+  // somewhere on the map, and this is how you tell WHICH line.
+  if (trail !== null) classes.push('marker-trailed');
   return L.divIcon({
     className: 'pin-icon',
-    html: `<span class="${classes.join(' ')}" style="--pin-colour:${colour}">${img ?? ''}</span>`,
+    html: `<span class="${classes.join(' ')}" style="--pin-colour:${colour}${trail !== null ? `;--trail-colour:${trail}` : ''}">${img ?? ''}</span>`,
     iconSize: [26, 26],
     iconAnchor: [13, 13],
   });
@@ -220,6 +238,11 @@ export interface MapPeer {
    * leaving — a vanished friend is worse than a stale one.
    */
   disconnected?: boolean | undefined;
+  /**
+   * Their path is pinned on the map right now, in this colour — the dot wears
+   * a ring of it so the line and the person can be matched by eye.
+   */
+  trailColour?: string | null | undefined;
 }
 
 /**
@@ -243,6 +266,27 @@ export interface MapZone {
 }
 
 /**
+ * One participant's recent path, PINNED on the map by the person reading it —
+ * it outlives the card that put it there, so the card can be closed without
+ * taking the path with it (the card used to sit right on top of the path it
+ * had just drawn).
+ *
+ * Dotted, because a path is history, not a live position or a claim. The
+ * colour is assigned by the parent, one per pinned path, and is echoed on
+ * that person's dot as a ring — colour alone would be a riddle with several
+ * paths up, so the map says whose is whose at both ends of the line.
+ */
+export interface MapTrail {
+  /** The participant this path belongs to — also the layer key. */
+  id: string;
+  points: Array<[number, number]>;
+  colour: string;
+  /** Their connection dropped: the path is doubly historical, and fades to
+      match the ghosted dot at the end of it. */
+  ghost?: boolean | undefined;
+}
+
+/**
  * A transient "X said something" bubble over a participant's position.
  * The parent owns the lifetime (a few seconds); tapping any bubble opens
  * the chat panel.
@@ -255,14 +299,76 @@ export interface MapChatFlag {
 const PEER_COLOUR = '#475569';
 
 /**
- * Tile sources — CARTO's free basemaps (OSM data, calmer cartography than the
- * OSM standard style). `voyager` for the light public surfaces, `dark` for
- * the dispatcher console. `{r}` makes Leaflet fetch @2x tiles on retina
- * screens; CARTO requires the joint OSM+CARTO attribution below.
+ * Tile sources. Three, because two different jobs want two different maps.
+ *
+ * CARTO's basemaps (`voyager`, `dark`) are calm, restrained cartography —
+ * right for a surface whose job is "here is the position", where anything
+ * else on the map is noise. `{r}` fetches @2x tiles on retina screens; CARTO
+ * requires the joint OSM+CARTO attribution.
+ *
+ * `street` is the OSM standard style, and it is on the LIVE room for one
+ * reason: CARTO renders no business names at all. Measured 24 Aug over Soho,
+ * London (51.5133, -0.1310), Voyager against OSM standard at z16/17/18:
+ *
+ *   z16  Voyager: street names and district labels (SEVEN DIALS, COVENT
+ *                 GARDEN), nothing else. OSM: named venues and dense POI
+ *                 icons throughout.
+ *   z17  Voyager: street names only. OSM: "Victory House Hotel",
+ *                 "SilverTime", "W London".
+ *   z18  Voyager: HOUSE NUMBERS — 54, 15, 24, 30, 45, 99, 138-140 — plus
+ *                 street names, and not one business named on the tile.
+ *                 OSM: "Prince Edward Theatre", "Pret A Manger", "M&S Food",
+ *                 "GG Beauty Spa", "She Soho", "Gauthier", "Limoncello".
+ *
+ * That is the field report exactly ("I just see house numbers"), and it is a
+ * property of the STYLE — not the zoom, not the theme, not the label variant.
+ * No CARTO variant (`voyager_labels_under`, `_nolabels`, `dark_all`) adds
+ * POIs the style never rendered. So the live room, where people find each
+ * other by landmark ("outside the Pret"), uses `street`; the share screen and
+ * the operator's resolve panels keep CARTO, where calm beats dense.
+ *
+ * Four other rasters were measured the same day and rejected on evidence:
+ *
+ *   Esri World Street Map / World Topo — attractive, but at z18 they show
+ *     street names and house numbers and NO business names. Same failure as
+ *     CARTO. Also the slowest tested (median 384/377 ms).
+ *   CyclOSM — the richest POI naming of the lot, and unusable here: the
+ *     cycle-network overlay dominates every street in blue.
+ *   OpenFreeMap "Liberty" (vector, keyless, 4 POI symbol layers in its
+ *     style; a z14 tile block fetched in a median 282 ms) — the best
+ *     candidate on paper, and NOT shipped: it needs MapLibre GL instead of
+ *     Leaflet, which is a port of this file, not a tile-URL change. Left as
+ *     a follow-up, unverified — it would not render in the automation
+ *     harness, so nobody has actually LOOKED at it yet.
+ *
+ * Speed, since "it renders slowly" was the objection: 12 tiles (a phone
+ * viewport) at z17 over six different UK high streets, browser cache cold —
+ * OSM standard median 67 ms, CARTO Voyager 234 ms, CyclOSM 279 ms, Esri
+ * 377-384 ms. OSM standard was the FASTEST thing tested, not the slowest.
+ * What it is not is pretty: it is a reference map, denser and busier than
+ * Voyager. That trade is deliberate and is the open question, not the speed.
+ *
+ * OSM's tile usage policy: fine for a low-volume demo like this one, not for
+ * heavy commercial traffic, requires the OSM attribution below, and asks that
+ * clients cache — which the service worker does (see sw.ts). There are no
+ * @2x tiles and no subdomain sharding on that host, so no `{r}` and no `{s}`.
  */
 const TILE_SOURCES = {
-  voyager: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  voyager: {
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    subdomains: 'abcd',
+  },
+  dark: {
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    subdomains: 'abcd',
+  },
+  street: {
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors',
+    subdomains: 'abc',
+  },
 } as const;
 
 export type TileVariant = keyof typeof TILE_SOURCES;
@@ -412,14 +518,21 @@ function chatFlagIcon(): L.DivIcon {
   });
 }
 
-function peerIcon(label: string | undefined, avatar?: string, disconnected = false): L.DivIcon {
+function peerIcon(
+  label: string | undefined,
+  avatar?: string,
+  disconnected = false,
+  trailColour?: string | null,
+): L.DivIcon {
   const img = avatarImg(avatar);
+  const trail = safeColour(trailColour);
   const first = (label ?? '').trim().charAt(0).toUpperCase();
   // One character, strictly alphanumeric — this goes into innerHTML.
   const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
+  const classes = `peer-dot${disconnected ? ' marker-gone' : ''}${trail !== null ? ' marker-trailed' : ''}`;
   return L.divIcon({
     className: 'peer-dot-icon',
-    html: `<span class="peer-dot${disconnected ? ' marker-gone' : ''}">${img ?? initial}</span>`,
+    html: `<span class="${classes}"${trail !== null ? ` style="--trail-colour:${trail}"` : ''}>${img ?? initial}</span>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   });
@@ -519,8 +632,8 @@ export interface MapProps {
   chatFlags?: MapChatFlag[];
   /** Tapping any chat bubble — opens the chat panel. */
   onChatFlagTap?: () => void;
-  /** One participant's recent path, drawn faintly while their card is open. */
-  focusTrail?: Array<[number, number]> | null;
+  /** The participant paths currently pinned on this map — see MapTrail. */
+  focusTrails?: MapTrail[] | undefined;
   /** Tapping the blue pin — the pin is a participant too, in a live room. */
   onPinTap?: () => void;
   /**
@@ -613,6 +726,11 @@ export interface MapProps {
    * peer dots use. Only ever set on a live room's view of somebody ELSE.
    */
   pinDisconnected?: boolean;
+  /**
+   * The pin's own path is pinned on the map, in this colour — the same ring
+   * the peer dots wear, for the same reason.
+   */
+  pinTrailColour?: string | null;
   /** Same, for the viewer-location dot. */
   viewerAvatar?: string | null;
   /**
@@ -650,7 +768,7 @@ export function Map({
   zones,
   chatFlags,
   onChatFlagTap,
-  focusTrail = null,
+  focusTrails,
   onPinTap,
   onZoneDraw,
   zonesFull = false,
@@ -665,6 +783,7 @@ export function Map({
   followSelf,
   pinAvatar = null,
   pinDisconnected = false,
+  pinTrailColour = null,
   viewerAvatar = null,
   onMapReady,
   className,
@@ -755,7 +874,8 @@ export function Map({
   const offscreenRef = useRef<OffscreenIndicatorsHandle | null>(null);
   const zoneRemovesRef = useRef<Record<string, (() => void) | undefined>>({});
   const chatFlagLayersRef = useRef<Record<string, L.Marker>>({});
-  const focusTrailRef = useRef<L.Polyline | null>(null);
+  /** id → the polyline drawing that person's pinned path. */
+  const focusTrailLayersRef = useRef<Record<string, L.Polyline>>({});
   const onPlaceMarkerRef = useRef(onPlaceMarker);
   onPlaceMarkerRef.current = onPlaceMarker;
   const onMarkerToolChangeRef = useRef(onMarkerToolChange);
@@ -773,9 +893,10 @@ export function Map({
     if (containerRef.current === null) return;
 
     const instance = L.map(containerRef.current, { zoomControl: true }).setView([lat, lon], initialZoom);
-    L.tileLayer(TILE_SOURCES[tiles], {
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-      subdomains: 'abcd',
+    const source = TILE_SOURCES[tiles];
+    L.tileLayer(source.url, {
+      attribution: source.attribution,
+      subdomains: source.subdomains,
       maxZoom: 19,
     }).addTo(instance);
 
@@ -813,7 +934,7 @@ export function Map({
       markerRef.current = null;
       circleRef.current = null;
       trailRef.current = null;
-      focusTrailRef.current = null;
+      focusTrailLayersRef.current = {};
       sketchHandleRef.current = null;
       viewerMarkerRef.current = null;
       viewerCircleRef.current = null;
@@ -902,7 +1023,7 @@ export function Map({
 
     if (markerRef.current === null) {
       const marker = L.marker([lat, lon], {
-        icon: pinIcon(colour, face, pinDisconnected),
+        icon: pinIcon(colour, face, pinDisconnected, pinTrailColour),
         draggable: onMoveRef.current !== undefined,
       }).addTo(map);
 
@@ -918,7 +1039,7 @@ export function Map({
       markerRef.current = marker;
     } else {
       markerRef.current.setLatLng([lat, lon]);
-      markerRef.current.setIcon(pinIcon(colour, face, pinDisconnected));
+      markerRef.current.setIcon(pinIcon(colour, face, pinDisconnected, pinTrailColour));
     }
 
     if (circleRef.current === null) {
@@ -956,29 +1077,44 @@ export function Map({
       trailRef.current.remove();
       trailRef.current = null;
     }
-  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin, pinAvatar, pinDisconnected]);
+  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin, pinAvatar, pinDisconnected, pinTrailColour]);
 
-  // One participant's recent path, shown faintly while their card is open.
-  // Neutral slate and dotted: it is history, not a live position or a claim.
+  // The pinned participant paths — add, restyle, extend and remove to match
+  // the list, exactly like the peer dots. Dotted and semi-transparent: a path
+  // is history, never a live position or a claim.
+  //
+  // The removal side is the half that has bitten before (a single trail that
+  // emptied used to linger forever). With several paths up it matters more,
+  // not less: an id that leaves the list must take its polyline with it, or a
+  // path stays drawn for someone who has left the room.
   useEffect(() => {
     if (map === null) return;
-    if (focusTrail !== null && focusTrail.length > 1) {
-      if (focusTrailRef.current === null) {
-        focusTrailRef.current = L.polyline(focusTrail, {
-          color: '#475569',
-          weight: 3,
-          opacity: 0.5,
-          dashArray: '1 7',
-          lineCap: 'round',
-        }).addTo(map);
+    const layers = focusTrailLayersRef.current;
+    const seen = new Set<string>();
+    for (const trail of focusTrails ?? []) {
+      if (trail.points.length < 2) continue; // one fix is a position, not a path
+      seen.add(trail.id);
+      const style = {
+        color: trail.colour,
+        weight: 3,
+        opacity: trail.ghost === true ? 0.32 : 0.75,
+        dashArray: '1 7',
+        lineCap: 'round' as const,
+      };
+      const existing = layers[trail.id];
+      if (existing === undefined) {
+        layers[trail.id] = L.polyline(trail.points, style).addTo(map);
       } else {
-        focusTrailRef.current.setLatLngs(focusTrail);
+        existing.setLatLngs(trail.points);
+        existing.setStyle(style);
       }
-    } else if (focusTrailRef.current !== null) {
-      focusTrailRef.current.remove();
-      focusTrailRef.current = null;
     }
-  }, [map, focusTrail]);
+    for (const [id, layer] of Object.entries(layers)) {
+      if (seen.has(id)) continue;
+      layer.remove();
+      delete layers[id];
+    }
+  }, [map, focusTrails]);
 
   // Sync the committed sketch. Same shape as the marker effect above, and its
   // handle is nulled in the same teardown, for the same StrictMode reason.
@@ -1026,10 +1162,11 @@ export function Map({
       // of them re-renders the dot rather than leaving a stale face on a
       // renamed peer — or a live-looking dot on someone who has dropped off.
       const gone = peer.disconnected ?? false;
-      const face = `${peer.label ?? ''}|${peer.avatar ?? ''}|${gone ? 'gone' : 'live'}`;
+      const trailColour = peer.trailColour ?? null;
+      const face = `${peer.label ?? ''}|${peer.avatar ?? ''}|${gone ? 'gone' : 'live'}|${trailColour ?? ''}`;
       if (existing === undefined) {
         const created = L.marker(at, {
-          icon: peerIcon(peer.label, peer.avatar, gone),
+          icon: peerIcon(peer.label, peer.avatar, gone, trailColour),
           // A ghosted dot is still THEIR last position — tapping it must open
           // their card, which is where "last connected …" is said out loud.
           interactive: peer.onTap !== undefined,
@@ -1054,7 +1191,7 @@ export function Map({
       } else {
         existing.marker.setLatLng(at);
         if (existing.face !== face) {
-          existing.marker.setIcon(peerIcon(peer.label, peer.avatar, gone));
+          existing.marker.setIcon(peerIcon(peer.label, peer.avatar, gone, trailColour));
           existing.circle.setStyle(gone ? GONE_CIRCLE : { ...LIVE_CIRCLE, fillOpacity: 0.08 });
           existing.face = face;
         }

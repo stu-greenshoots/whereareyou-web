@@ -61,6 +61,22 @@ registerRoute(
   }),
 );
 
+// The live room's basemap is OSM standard, not CARTO — it is the only free
+// raster that actually names shops and pubs (see TILE_SOURCES in Map.tsx).
+// Its own tile usage policy asks clients to cache rather than re-fetch, so
+// this is required of us, not merely convenient. Same rules as above: only
+// what has been viewed, never a pre-fetch.
+registerRoute(
+  /^https:\/\/tile\.openstreetmap\.org\/.*/,
+  new CacheFirst({
+    cacheName: 'osm-tiles',
+    plugins: [
+      new ExpirationPlugin({ maxEntries: 250, maxAgeSeconds: 7 * 24 * 60 * 60 }) as WorkboxPlugin,
+      new CacheableResponsePlugin({ statuses: [0, 200] }) as WorkboxPlugin,
+    ],
+  }),
+);
+
 /** What a push payload may carry — anything else is ignored. */
 interface PushPayload {
   title?: string;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { Map as LeafletMap } from 'leaflet';
 import {
   MAX_CHAT_HISTORY,
@@ -35,17 +35,20 @@ import { connectLive, newLiveId, type LiveHandle, type LiveHandlers, type LiveWe
 import { useSharedConnectivity } from './connectivity.js';
 import {
   Map,
+  centreOnPlacement,
   disarmPointTool,
   escapeHtml,
   isSafeAvatar,
   releaseFollow,
   type MapChatFlag,
   type MapPeer,
+  type MapTrail,
   type MapZone,
   type PlacedMarker,
   type TileVariant,
 } from './Map.jsx';
 import { MarkerPlaceStrip, MarkerStrip } from './MarkerStrip.jsx';
+import { SKETCH_INKS } from './sketch-layer.js';
 import { NotifyControl } from './Notify.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
@@ -87,6 +90,29 @@ const CHAT_FLAG_MS = 4000;
 const ZONE_ACK_MS = 15_000;
 /** Start showing the chat counter when this near the cap. */
 const CHAT_COUNTER_AT = 50;
+
+/**
+ * The pinned-path palette — and, because one path owns one colour, the cap on
+ * how many may be up at once. Three lines that can genuinely be told apart at
+ * arm's length outdoors is an honest number; a fourth would be a colour
+ * somebody has to squint at.
+ *
+ * Borrowed from the drawing inks rather than invented, and for the same
+ * reason they were chosen: they are the colours on this map that carry no
+ * meaning. Amber is a REPORTED location, blue the caller's own position,
+ * green a LIVE session, indigo an OFFLINE code, red an error — a path
+ * borrowing any of those would be making a claim it cannot support. Slate is
+ * out too, for a duller reason: it is what the peer dots are already made of,
+ * so a slate ring on a slate dot is not a ring, it is a bigger dot (measured
+ * — the first cut of this used slate and the ring vanished).
+ *
+ * Ink and path can still be told apart at a glance: ink is thick, solid and
+ * white-cased; a path is thin, dotted and uncased. And no path colour ever
+ * appears without the legend chip naming whose path it is — the colour
+ * separates the lines, the chip and the ring on the dot say who.
+ */
+const TRAIL_COLOURS = [SKETCH_INKS[0], SKETCH_INKS[1], SKETCH_INKS[2]] as const;
+const MAX_SHOWN_TRAILS = TRAIL_COLOURS.length;
 
 /**
  * The ids of chat messages THIS DEVICE sent into a session, per code —
@@ -149,6 +175,27 @@ function isStale(lastSeenAt: string | undefined, now = Date.now()): boolean {
  */
 function isGone(participant: LiveParticipant | undefined): boolean {
   return participant?.disconnectedAt !== undefined;
+}
+
+/** One pinned path. */
+interface PinnedTrail {
+  id: string;
+  colour: string;
+}
+
+/**
+ * Pin `id`'s path, holding whichever palette colour no other pinned path is
+ * using. At the cap the OLDEST steps aside rather than the tap doing nothing:
+ * a control that silently refuses reads as broken. Already pinned is a no-op,
+ * so a colour never changes under someone mid-read.
+ */
+function withTrail(current: PinnedTrail[], id: string): PinnedTrail[] {
+  if (current.some((trail) => trail.id === id)) return current;
+  const kept = current.slice(-(MAX_SHOWN_TRAILS - 1));
+  const taken = new Set(kept.map((trail) => trail.colour));
+  // `kept` is one short of the palette, so a free colour always exists.
+  const colour = TRAIL_COLOURS.find((candidate) => !taken.has(candidate)) ?? TRAIL_COLOURS[0];
+  return [...kept, { id, colour }];
 }
 
 /** The sharer heads every People group; everyone else keeps roster order. */
@@ -228,7 +275,12 @@ export interface SessionMapProps {
   /** Same, for our marker list. */
   onMarkersShared?: (markers: SessionMarker[]) => void;
   onLeave: () => void;
-  /** Which basemap this surface draws — `dark` on the console. */
+  /**
+   * Which basemap this surface draws. Defaults to `street` — the live room is
+   * where people navigate to each other by landmark ("outside the Pret"), and
+   * it is the only free raster that actually names shops and pubs. See
+   * TILE_SOURCES in Map.tsx for the measurement behind that.
+   */
   tiles?: TileVariant;
   /** Panel to open as the screen mounts — how a tapped push notification
       lands on the thing it announced (chat, activity, people). */
@@ -249,7 +301,7 @@ export function SessionMap({
   onSketchShared,
   onMarkersShared,
   onLeave,
-  tiles = 'voyager',
+  tiles = 'street',
   initialPanel,
 }: SessionMapProps) {
   const [participants, setParticipants] = useState<Record<string, LiveParticipant>>({});
@@ -281,11 +333,20 @@ export function SessionMap({
   const [panel, setPanel] = useState<'none' | 'chat' | 'activity' | 'people'>(
     initialPanel ?? 'none',
   );
-  /** Which participant's card is open, and where from. Their trail shows
-      while it is. A card opened from a tapped pin or dot anchors to that
-      marker as a popover; one opened from the People roster keeps the
-      classic bottom-sheet presentation. */
+  /** Which participant's card is open, and how it should present itself.
+      `map` anchors it to that person's marker as a popover — a tapped pin or
+      dot, and a roster tap that flew the camera to them. `roster` is the
+      classic bottom sheet, for someone with no position to point at. */
   const [card, setCard] = useState<{ id: string; via: 'map' | 'roster' } | null>(null);
+  /**
+   * Whose paths are pinned on the map, oldest first, each holding a colour
+   * for as long as it is up. Opening someone's card pins their path; CLOSING
+   * the card no longer takes it away — the card sat directly on top of the
+   * path it had just drawn, which made the whole thing useless. Turning one
+   * off is now a deliberate act: the card's toggle, its chip in the legend,
+   * or Hide all.
+   */
+  const [trails, setTrails] = useState<PinnedTrail[]>([]);
   /** The live Leaflet map — what the popover projects positions through. */
   const [liveMap, setLiveMap] = useState<LeafletMap | null>(null);
   /** The compass overlay, carrying the outcome of the iOS permission ask. */
@@ -307,6 +368,8 @@ export function SessionMap({
   panelRef.current = panel;
   const myMarkersRef = useRef(myMarkers);
   myMarkersRef.current = myMarkers;
+  const participantsRef = useRef(participants);
+  participantsRef.current = participants;
   const pendingChatRef = useRef<Array<{ localId: string; text: string }>>([]);
   const pendingZonesRef = useRef<Record<string, number>>({});
   const flagTimersRef = useRef<Record<string, number>>({});
@@ -351,6 +414,33 @@ export function SessionMap({
     }
   }, []);
 
+  const showTrail = useCallback((id: string) => {
+    setTrails((current) => withTrail(current, id));
+  }, []);
+
+  const hideTrail = useCallback((id: string) => {
+    setTrails((current) => current.filter((trail) => trail.id !== id));
+  }, []);
+
+  const toggleTrail = useCallback((id: string) => {
+    setTrails((current) =>
+      current.some((trail) => trail.id === id)
+        ? current.filter((trail) => trail.id !== id)
+        : withTrail(current, id),
+    );
+  }, []);
+
+  /** Open someone's card and pin their path with it — but only if there IS
+      a path. A watcher who never shared has no line to draw, and pinning them
+      would hand a palette slot and a legend chip to nothing. */
+  const openCard = useCallback(
+    (id: string, via: 'map' | 'roster') => {
+      setCard({ id, via });
+      if ((participantsRef.current[id]?.trail?.length ?? 0) >= 2) showTrail(id);
+    },
+    [showTrail],
+  );
+
   const applyWelcome = useCallback(
     (welcome: LiveWelcome) => {
       selfIdRef.current = welcome.participantId;
@@ -372,6 +462,13 @@ export function SessionMap({
       const roster =
         role === 'owner' ? welcome.roster.filter((entry) => !entry.owner) : welcome.roster;
       setParticipants(Object.fromEntries(roster.map((entry) => [entry.id, entry])));
+      // A reconnect hands us a whole new roster with whole new participant
+      // ids, and it does NOT emit `left` for the old ones. Any pinned path
+      // keyed on an id this welcome does not carry is now a chip naming
+      // somebody the map can no longer draw — prune it. Our own id is never
+      // in the roster (the self entry is synthesized), so it is kept by name.
+      const present = new Set([...welcome.roster.map((entry) => entry.id), welcome.participantId]);
+      setTrails((current) => current.filter((trail) => present.has(trail.id)));
       setChat(welcome.chat);
       setZones(welcome.zones);
       setEvents(welcome.events.slice(-MAX_EVENT_HISTORY));
@@ -437,6 +534,10 @@ export function SessionMap({
       return rest;
     });
     setCard((current) => (current?.id === participantId ? null : current));
+    // A path outlives its card, but never its person. `left` is genuine
+    // removal, so the line goes with them — leaving it drawn would be the
+    // map asserting a route for somebody no longer in the room.
+    setTrails((current) => current.filter((trail) => trail.id !== participantId));
   }, []);
 
   /** Whether a chat message is OURS: same connection, or an id this device
@@ -507,6 +608,13 @@ export function SessionMap({
   }, []);
 
   const applyExpiry = useCallback((next: string) => setExpiresAt(next), []);
+
+  // The room is over: every pinned path comes down with it. What is left on
+  // screen after an expiry is a record of where people WERE, and a dotted
+  // line is exactly the thing that would keep reading as current.
+  useEffect(() => {
+    if (ended !== null) setTrails([]);
+  }, [ended]);
 
   // One socket for the lifetime of the screen.
   useEffect(() => {
@@ -609,12 +717,30 @@ export function SessionMap({
     if (selfId === null) return;
     setParticipants((current) => {
       const now = new Date().toISOString();
+      // Our own path is grown here for the same reason everyone else's is
+      // grown in applyParticipant: nothing on the wire carries it back to us.
+      // Without this, tapping your own pin offers a path toggle that would
+      // draw nothing — and the owner is the person most likely to try it.
+      const kept = current[selfId]?.trail ?? [];
+      let trail = kept;
+      if (myPosition !== null) {
+        const last = kept[kept.length - 1];
+        if (
+          last === undefined ||
+          last.takenAt !== myPosition.takenAt ||
+          last.lat !== myPosition.lat ||
+          last.lon !== myPosition.lon
+        ) {
+          trail = [...kept, myPosition].slice(-MAX_TRAIL_FIXES);
+        }
+      }
       const self: LiveParticipant = {
         id: selfId,
         owner: role === 'owner',
         joinedAt: current[selfId]?.joinedAt ?? now,
         lastSeenAt: now,
         updatedAt: now,
+        trail,
         ...(name !== undefined && name !== '' ? { name } : {}),
         ...(avatar !== undefined && avatar !== '' ? { avatar } : {}),
         ...(myPosition !== null ? { position: myPosition } : {}),
@@ -931,6 +1057,17 @@ export function SessionMap({
   // ourselves, and `pin` is our own stream there anyway.
   const pinGone = role === 'joiner' && isGone(owner);
 
+  /** participantId → the colour their pinned path is drawn in, if any. */
+  const trailColours = useMemo(
+    () => Object.fromEntries(trails.map((trail) => [trail.id, trail.colour])),
+    [trails],
+  );
+
+  // Whose person the blue pin IS — the one whose card its tap opens, and
+  // whose pinned path (if any) rings it.
+  const pinPersonId = role === 'owner' ? selfId : (owner?.id ?? null);
+  const pinTrailColour = pinPersonId !== null ? (trailColours[pinPersonId] ?? null) : null;
+
   const peers = useMemo(() => {
     const dots: MapPeer[] = [];
     for (const entry of roster) {
@@ -944,7 +1081,9 @@ export function SessionMap({
         // takes it off the map. Still tappable — the card is where the room
         // is told WHEN they were last connected.
         disconnected: isGone(entry),
-        onTap: () => setCard({ id: entry.id, via: 'map' }),
+        // The ring that says WHICH dotted line on the map is theirs.
+        trailColour: trailColours[entry.id] ?? null,
+        onTap: () => openCard(entry.id, 'map'),
       });
     }
     // A sharing joiner appears to themselves too — seeing your own dot is
@@ -956,15 +1095,16 @@ export function SessionMap({
         label: name ?? 'Me',
         avatar,
         position: myPosition,
+        trailColour: (selfId !== null ? trailColours[selfId] : null) ?? null,
         onTap: () => {
           const self = selfIdRef.current;
-          if (self !== null) setCard({ id: self, via: 'map' });
+          if (self !== null) openCard(self, 'map');
         },
       });
     }
     return dots;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participants, selfId, role, share, myPosition, name, avatar]);
+  }, [participants, selfId, role, share, myPosition, name, avatar, trailColours, openCard]);
 
   const placedMarkers = useMemo(() => {
     const points: PlacedMarker[] = [];
@@ -1042,12 +1182,32 @@ export function SessionMap({
     return list;
   }, [chatFlags, participants]);
 
-  const focusTrail = useMemo(() => {
-    if (card === null) return null;
-    const trail = participants[card.id]?.trail;
-    if (trail === undefined || trail.length < 2) return null;
-    return trail.map((fix): [number, number] => [fix.lat, fix.lon]);
-  }, [card, participants]);
+  const focusTrails = useMemo(() => {
+    const list: MapTrail[] = [];
+    for (const { id, colour } of trails) {
+      const entry = participants[id];
+      const fixes = entry?.trail;
+      // Still pinned but nothing to draw yet (one fix, or none): the chip
+      // stays up, the line simply has nothing to say.
+      if (entry === undefined || fixes === undefined || fixes.length < 2) continue;
+      list.push({
+        id,
+        colour,
+        points: fixes.map((fix): [number, number] => [fix.lat, fix.lon]),
+        // A dropped connection's path is history twice over; it fades to
+        // match the ghosted dot at the end of it.
+        ghost: isGone(entry),
+      });
+    }
+    return list;
+  }, [trails, participants]);
+
+  /** Whether this person has enough of a path to be worth drawing — what the
+      card's toggle is offered on. */
+  const hasPath = useCallback(
+    (id: string): boolean => (participants[id]?.trail?.length ?? 0) >= 2,
+    [participants],
+  );
 
   const remoteSketches = useMemo(() => {
     const decoded: Array<{ id: string; sketch: Sketch }> = [];
@@ -1143,6 +1303,35 @@ export function SessionMap({
       : null;
   }, [card, cardParticipant, role, selfId, pin.lat, pin.lon, myPosition]);
 
+  /**
+   * Tapping someone in the People list is NAVIGATION: bring the map to them,
+   * open their card anchored on their marker, and pin their path. The panel
+   * closes on the way — the whole point is to see where they are, and the
+   * roster is sitting over exactly that.
+   *
+   * Deliberately going to look at someone is the same gesture as going to
+   * look at a place, so it puts follow-mode down through the same
+   * `centreOnPlacement` path the search uses; without that the next streaming
+   * fix would yank the view straight back off them.
+   *
+   * A watcher who never shared has nothing to fly to. The row does not
+   * pretend: no jump, no anchored card, and the card says so in as many
+   * words rather than opening onto empty map.
+   */
+  const focusPerson = useCallback(
+    (entry: LiveParticipant) => {
+      const position = entry.position;
+      if (position === undefined) {
+        openCard(entry.id, 'roster');
+        return;
+      }
+      setPanel('none');
+      if (liveMap !== null) centreOnPlacement(liveMap, position.lat, position.lon, 16);
+      openCard(entry.id, 'map');
+    },
+    [liveMap, openCard],
+  );
+
   /** One People row, rendered identically for both groups — the difference
       is which time it tells and how muted it reads, never its shape. */
   const personRow = (entry: LiveParticipant) => {
@@ -1158,7 +1347,7 @@ export function SessionMap({
         key={entry.id}
         type="button"
         className={`person-row${gone ? ' person-row-gone' : ''}`}
-        onClick={() => setCard({ id: entry.id, via: 'roster' })}
+        onClick={() => focusPerson(entry)}
       >
         <Face name={entry.name ?? null} avatar={entry.avatar ?? null} />
         <span className="person-name">
@@ -1166,6 +1355,13 @@ export function SessionMap({
           {entry.owner ? <span className="person-tag">sharer</span> : null}
           {entry.position === undefined && !entry.owner ? (
             <span className="person-tag person-tag-quiet">watching</span>
+          ) : null}
+          {trailColours[entry.id] !== undefined ? (
+            <span
+              className="trail-swatch"
+              style={{ '--trail-colour': trailColours[entry.id] } as CSSProperties}
+              aria-label="path shown"
+            />
           ) : null}
         </span>
         <span
@@ -1199,10 +1395,10 @@ export function SessionMap({
         zones={mapZones}
         chatFlags={flags}
         onChatFlagTap={() => openPanel('chat')}
-        focusTrail={focusTrail}
+        focusTrails={focusTrails}
+        pinTrailColour={pinTrailColour}
         onPinTap={() => {
-          const target = role === 'owner' ? selfId : (owner?.id ?? null);
-          if (target !== null) setCard({ id: target, via: 'map' });
+          if (pinPersonId !== null) openCard(pinPersonId, 'map');
         }}
         /* Place search, as a permanent map control — top-left under the zoom,
            on the owner's map, a joiner's and a watcher's alike. It moves the
@@ -1307,6 +1503,42 @@ export function SessionMap({
                     Cancel
                   </button>
                 </form>
+              </div>
+            )}
+            {/* The paths legend. It exists the moment a path does, and it
+                is the answer to two questions at once: which colour is
+                whose, and how do I put this away. */}
+            {trails.length > 0 && (
+              <div className="map-sheet trail-legend">
+                <span className="trail-legend-label">Paths shown</span>
+                {trails.map((trail) => (
+                  <button
+                    key={trail.id}
+                    type="button"
+                    className="trail-chip"
+                    aria-label={`Hide ${displayName(trail.id)}’s path`}
+                    onClick={() => hideTrail(trail.id)}
+                  >
+                    <span
+                      className="trail-swatch"
+                      style={{ '--trail-colour': trail.colour } as CSSProperties}
+                      aria-hidden="true"
+                    />
+                    <span className="trail-chip-name">{displayName(trail.id)}</span>
+                    <span className="trail-chip-x" aria-hidden="true">
+                      ✕
+                    </span>
+                  </button>
+                ))}
+                {trails.length > 1 && (
+                  <button
+                    type="button"
+                    className="link-button trail-hide-all"
+                    onClick={() => setTrails([])}
+                  >
+                    Hide all
+                  </button>
+                )}
               </div>
             )}
             <div className="map-sheet map-sheet-code live-bar">
@@ -1538,11 +1770,16 @@ export function SessionMap({
                     </span>
                   )
                 )}
-                {cardParticipant.position !== undefined && (
+                {cardParticipant.position !== undefined ? (
                   <span>
                     {cardGone ? 'Last fix' : 'Latest fix'} ±
                     {Math.round(cardParticipant.position.accuracyM)}m
                   </span>
+                ) : (
+                  // Said plainly, because the roster row that opened this
+                  // deliberately did NOT fly anywhere, and an unexplained
+                  // non-jump reads as a broken tap.
+                  <span>No position shared</span>
                 )}
               </div>
               {/* Two different truths, deliberately worded so they can never
@@ -1559,9 +1796,39 @@ export function SessionMap({
                   Nothing heard for a little while — this may not be where they are right now.
                 </p>
               )}
-              {focusTrail !== null && (
-                <p className="live-card-trail">Their recent path is shown on the map while this is open.</p>
-              )}
+              {/* The path toggle. Offered only where there is a path to
+                  draw, and it says what it will do next, not what is true
+                  now — the state is visible on the map either way. */}
+              {hasPath(cardParticipant.id) &&
+                (trailColours[cardParticipant.id] !== undefined ? (
+                  <>
+                    <button
+                      type="button"
+                      className="button live-card-path"
+                      onClick={() => toggleTrail(cardParticipant.id)}
+                    >
+                      <span
+                        className="trail-swatch"
+                        style={
+                          { '--trail-colour': trailColours[cardParticipant.id] } as CSSProperties
+                        }
+                        aria-hidden="true"
+                      />
+                      Hide path
+                    </button>
+                    <p className="live-card-trail">
+                      Their path stays on the map after you close this.
+                    </p>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="button live-card-path"
+                    onClick={() => toggleTrail(cardParticipant.id)}
+                  >
+                    Show path
+                  </button>
+                ))}
               {(() => {
                 const theirs = events.filter((event) => event.participantId === cardParticipant.id);
                 if (theirs.length === 0) return null;
