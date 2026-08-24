@@ -6,6 +6,7 @@ import { AccountProvider, useAccount } from './AccountContext.jsx';
 import { ConnectivityProvider } from './connectivity.js';
 import { ProfileMenu } from './ProfileMenu.jsx';
 import { SessionMap } from './SessionMap.jsx';
+import type { MapSurface } from './tiles.js';
 
 type Route = 'share' | 'lookup';
 
@@ -82,12 +83,13 @@ function AppShell() {
             displayCode="DEVD-EV00"
             role={params.get('role') === 'joiner' ? 'joiner' : 'owner'}
             share={params.get('watch') !== '1'}
-            /* The real live room takes SessionMap's default (`street`) on
-               both surfaces — a joined map reads light, dark stays on the
-               operator's static resolve panels. The harness mirrors that,
-               with ?tiles= as the escape hatch for eyeballing the others. */
-            {...(params.get('tiles') !== null
-              ? { tiles: params.get('tiles') as 'voyager' | 'dark' | 'street' }
+            /* The real live room takes SessionMap's default (`live`) on both
+               themes — a joined map reads light, dark stays on the operator's
+               static resolve panels. The harness mirrors that, with
+               ?surface=share|console|live as the escape hatch for eyeballing
+               the other basemaps against this scene. */
+            {...(params.get('surface') !== null
+              ? { surface: params.get('surface') as MapSurface }
               : {})}
             name={params.get('name') ?? 'Dev'}
             initialPosition={{ lat: 51.50809, lon: -0.12789, accuracyM: 12 }}

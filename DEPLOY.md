@@ -16,7 +16,8 @@ CI workflow — the token lacks `workflow` scope).
 ## The deploy procedure (exactly)
 
 Three build-time env vars matter. **Miss `VITE_API_BASE` and session codes
-break; miss `VITE_DEMO_API_KEY` and look-up 401s.**
+break; miss `VITE_DEMO_API_KEY` and look-up 401s.** Two more are optional and
+control the basemap — see the table below.
 
 ```bash
 cd ~/code/fun/whereareyou/web
@@ -51,6 +52,41 @@ curl -sL -o /dev/null -w "%{http_code}\n" https://whereareyou.stu-bot.uk/       
 Also commit the source change to `main` normally (`git push origin main`) — the
 gh-pages branch is build output only.
 
+## Build-time env vars, all of them
+
+Everything is baked in at build time; nothing is read at runtime. Whatever the
+deploy build does not pass, the deployed site does not have.
+
+| Var | Needed? | What it does |
+|---|---|---|
+| `VITE_API_BASE` | **yes** | Where session codes are minted and resolved. Miss it and session codes break. |
+| `VITE_DEMO_API_KEY` | **yes** | The look-up console's resolver key. Miss it and look-up 401s. |
+| `VITE_BASE` | no | Asset path prefix. Leave unset for the custom domain (`/`). |
+| `VITE_TILE_PROVIDER` | no | Basemap provider: `carto` (the default, and what ships today), `maptiler`, or `thunderforest`. |
+| `VITE_TILE_KEY` | with the above | The provider's API key. Required by `maptiler` and `thunderforest`; ignored by `carto`. |
+
+**The tile vars are a pair.** `VITE_TILE_PROVIDER` set to a keyed provider
+without `VITE_TILE_KEY` falls back to the `carto` basemaps — the map still
+draws, it is just not the map you asked for, and the only complaint is a
+console warning in a dev build. So if the deploy is meant to ship a keyed
+provider, **both** must be on the build command:
+
+```bash
+VITE_API_BASE=https://whereareyou-api.onrender.com \
+VITE_DEMO_API_KEY=demo-key-alpha \
+VITE_TILE_PROVIDER=maptiler \
+VITE_TILE_KEY=... \
+  npm run build
+```
+
+The tile key ends up in the JS bundle and in the tile URLs the service worker
+caches. It is a public, usage-limited key, not a secret — restrict it by HTTP
+referrer at the provider (`whereareyou.stu-bot.uk`) rather than trying to hide
+it. Never commit one.
+
+Which surface draws which basemap lives in `src/tiles.ts`; that file is the
+one place to edit to move every map in the app at once.
+
 ## Local dev
 
 ```bash
@@ -68,4 +104,4 @@ the dev server proxies `/v1` and `/health` to `localhost:8787`.
   unset (defaults to `/`). It's only set to `/whereareyou-web/` for the bare
   `github.io` project-page path, which is not how the live site is served.
 - The three-env-var build is easy to forget — that's the #1 way to ship a broken
-  deploy here.
+  deploy here. (Five vars now, but only the first two break anything.)

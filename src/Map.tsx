@@ -18,6 +18,7 @@ import {
 } from './offscreen-indicators.js';
 import { PlaceSearch, placeShortName } from './PlaceSearch.jsx';
 import { SKETCH_INKS, attachSketch, type SketchHandle } from './sketch-layer.js';
+import { resolveTiles, type MapSurface } from './tiles.js';
 import {
   beginStroke,
   commitShape,
@@ -299,81 +300,6 @@ export interface MapChatFlag {
 const PEER_COLOUR = '#475569';
 
 /**
- * Tile sources. Three, because two different jobs want two different maps.
- *
- * CARTO's basemaps (`voyager`, `dark`) are calm, restrained cartography —
- * right for a surface whose job is "here is the position", where anything
- * else on the map is noise. `{r}` fetches @2x tiles on retina screens; CARTO
- * requires the joint OSM+CARTO attribution.
- *
- * `street` is the OSM standard style, and it is on the LIVE room for one
- * reason: CARTO renders no business names at all. Measured 24 Aug over Soho,
- * London (51.5133, -0.1310), Voyager against OSM standard at z16/17/18:
- *
- *   z16  Voyager: street names and district labels (SEVEN DIALS, COVENT
- *                 GARDEN), nothing else. OSM: named venues and dense POI
- *                 icons throughout.
- *   z17  Voyager: street names only. OSM: "Victory House Hotel",
- *                 "SilverTime", "W London".
- *   z18  Voyager: HOUSE NUMBERS — 54, 15, 24, 30, 45, 99, 138-140 — plus
- *                 street names, and not one business named on the tile.
- *                 OSM: "Prince Edward Theatre", "Pret A Manger", "M&S Food",
- *                 "GG Beauty Spa", "She Soho", "Gauthier", "Limoncello".
- *
- * That is the field report exactly ("I just see house numbers"), and it is a
- * property of the STYLE — not the zoom, not the theme, not the label variant.
- * No CARTO variant (`voyager_labels_under`, `_nolabels`, `dark_all`) adds
- * POIs the style never rendered. So the live room, where people find each
- * other by landmark ("outside the Pret"), uses `street`; the share screen and
- * the operator's resolve panels keep CARTO, where calm beats dense.
- *
- * Four other rasters were measured the same day and rejected on evidence:
- *
- *   Esri World Street Map / World Topo — attractive, but at z18 they show
- *     street names and house numbers and NO business names. Same failure as
- *     CARTO. Also the slowest tested (median 384/377 ms).
- *   CyclOSM — the richest POI naming of the lot, and unusable here: the
- *     cycle-network overlay dominates every street in blue.
- *   OpenFreeMap "Liberty" (vector, keyless, 4 POI symbol layers in its
- *     style; a z14 tile block fetched in a median 282 ms) — the best
- *     candidate on paper, and NOT shipped: it needs MapLibre GL instead of
- *     Leaflet, which is a port of this file, not a tile-URL change. Left as
- *     a follow-up, unverified — it would not render in the automation
- *     harness, so nobody has actually LOOKED at it yet.
- *
- * Speed, since "it renders slowly" was the objection: 12 tiles (a phone
- * viewport) at z17 over six different UK high streets, browser cache cold —
- * OSM standard median 67 ms, CARTO Voyager 234 ms, CyclOSM 279 ms, Esri
- * 377-384 ms. OSM standard was the FASTEST thing tested, not the slowest.
- * What it is not is pretty: it is a reference map, denser and busier than
- * Voyager. That trade is deliberate and is the open question, not the speed.
- *
- * OSM's tile usage policy: fine for a low-volume demo like this one, not for
- * heavy commercial traffic, requires the OSM attribution below, and asks that
- * clients cache — which the service worker does (see sw.ts). There are no
- * @2x tiles and no subdomain sharding on that host, so no `{r}` and no `{s}`.
- */
-const TILE_SOURCES = {
-  voyager: {
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-    subdomains: 'abcd',
-  },
-  dark: {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-    subdomains: 'abcd',
-  },
-  street: {
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap contributors',
-    subdomains: 'abc',
-  },
-} as const;
-
-export type TileVariant = keyof typeof TILE_SOURCES;
-
-/**
  * A PLACED point — a claim about the world ("the entrance is here"), never a
  * live fix. Diamond, not dot, so the two can't be confused at a glance.
  */
@@ -565,11 +491,12 @@ export interface MapProps {
   /** Tiles come from the network. When there is none, say so. */
   offline?: boolean;
   /**
-   * Which basemap to draw: `voyager` (light — the public surfaces) or `dark`
-   * (the console). Read once at creation — a mounted map never changes
-   * surface.
+   * WHICH SURFACE THIS IS — not which tiles to draw. What that surface's
+   * basemap actually is belongs to `tiles.ts`, so that one edit there moves
+   * every map in the app together. Read once at creation; a mounted map
+   * never changes surface.
    */
-  tiles?: TileVariant;
+  surface?: MapSurface;
   /**
    * Shows the place-search control: a persistent map control, top-left under
    * the zoom buttons, on every surface that sets it. It belongs to the MAP,
@@ -750,7 +677,7 @@ export function Map({
   onMove,
   trail,
   offline = false,
-  tiles = 'voyager',
+  surface = 'share',
   placeSearch = false,
   onLocate,
   locating = false,
@@ -789,6 +716,10 @@ export function Map({
   className,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // The basemap this surface draws. Pure and deterministic — the same call
+  // during render and inside the creation effect below cannot disagree.
+  const basemap = resolveTiles(surface);
 
   // The map lives in STATE, not a ref, so the layer effect below genuinely
   // depends on it and re-runs when the map is recreated.
@@ -900,11 +831,14 @@ export function Map({
     if (containerRef.current === null) return;
 
     const instance = L.map(containerRef.current, { zoomControl: true }).setView([lat, lon], initialZoom);
-    const source = TILE_SOURCES[tiles];
-    L.tileLayer(source.url, {
-      attribution: source.attribution,
-      subdomains: source.subdomains,
-      maxZoom: 19,
+    L.tileLayer(basemap.url, {
+      attribution: basemap.attribution,
+      subdomains: basemap.subdomains,
+      maxZoom: basemap.maxZoom,
+      // Only the 512px providers carry these; omitting them leaves Leaflet's
+      // 256/0 defaults, which is what every keyless provider here wants.
+      ...(basemap.tileSize !== undefined ? { tileSize: basemap.tileSize } : {}),
+      ...(basemap.zoomOffset !== undefined ? { zoomOffset: basemap.zoomOffset } : {}),
     }).addTo(instance);
 
     // Leaflet measures the container on creation. If it was hidden or still
@@ -1928,8 +1862,12 @@ export function Map({
   return (
     <div className={`map-frame ${fullscreen ? 'map-frame-full' : ''} ${fullscreenLocked ? 'map-frame-locked' : ''}`}>
       {/* `map-tiles-dark` scopes the legibility filter to the tile pane of
-          dark basemaps only — see styles.css for why Dark Matter needs it. */}
-      <div ref={containerRef} className={`${className ?? 'map'}${tiles === 'dark' ? ' map-tiles-dark' : ''}`} />
+          dark basemaps only — see styles.css for why Dark Matter needs it.
+          Which basemaps those are is the tile module's call, not this one's. */}
+      <div
+        ref={containerRef}
+        className={`${className ?? 'map'}${basemap.darkFilter ? ' map-tiles-dark' : ''}`}
+      />
 
       {/* Place search — top-LEFT, tucked under Leaflet's zoom buttons. The
           right-hand column is spoken for on every surface (the account

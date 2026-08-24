@@ -21,6 +21,7 @@ import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+import { TILE_CACHE_ROUTES } from './tiles.js';
 
 declare let self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<PrecacheEntry | string>;
@@ -45,37 +46,28 @@ registerRoute(
 );
 
 // Map tiles are the one thing that genuinely needs the network. Cache what
-// has actually been viewed (never pre-fetch — the tile policies forbid it),
-// so a map seen before losing signal keeps its tiles. Must match
-// TILE_SOURCES in src/Map.tsx.
-registerRoute(
-  /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*/,
-  new CacheFirst({
-    cacheName: 'carto-tiles',
-    plugins: [
-      // Workbox's plugin types predate exactOptionalPropertyTypes; the
-      // instances are the intended values, the cast only bridges the gap.
-      new ExpirationPlugin({ maxEntries: 250, maxAgeSeconds: 7 * 24 * 60 * 60 }) as WorkboxPlugin,
-      new CacheableResponsePlugin({ statuses: [0, 200] }) as WorkboxPlugin,
-    ],
-  }),
-);
-
-// The live room's basemap is OSM standard, not CARTO — it is the only free
-// raster that actually names shops and pubs (see TILE_SOURCES in Map.tsx).
-// Its own tile usage policy asks clients to cache rather than re-fetch, so
-// this is required of us, not merely convenient. Same rules as above: only
-// what has been viewed, never a pre-fetch.
-registerRoute(
-  /^https:\/\/tile\.openstreetmap\.org\/.*/,
-  new CacheFirst({
-    cacheName: 'osm-tiles',
-    plugins: [
-      new ExpirationPlugin({ maxEntries: 250, maxAgeSeconds: 7 * 24 * 60 * 60 }) as WorkboxPlugin,
-      new CacheableResponsePlugin({ statuses: [0, 200] }) as WorkboxPlugin,
-    ],
-  }),
-);
+// has actually been viewed (never pre-fetch — every one of these providers'
+// usage policies forbids that), so a map seen before losing signal keeps its
+// tiles. OSM's policy goes further and asks clients to cache rather than
+// re-fetch, so for that host this is required of us, not merely convenient.
+//
+// The host list is TILE_CACHE_ROUTES in src/tiles.ts, alongside the tile
+// URLs themselves — including hosts the active provider does not use, so
+// that switching provider cannot quietly take offline tiles away with it.
+for (const { pattern, cacheName } of TILE_CACHE_ROUTES) {
+  registerRoute(
+    pattern,
+    new CacheFirst({
+      cacheName,
+      plugins: [
+        // Workbox's plugin types predate exactOptionalPropertyTypes; the
+        // instances are the intended values, the cast only bridges the gap.
+        new ExpirationPlugin({ maxEntries: 250, maxAgeSeconds: 7 * 24 * 60 * 60 }) as WorkboxPlugin,
+        new CacheableResponsePlugin({ statuses: [0, 200] }) as WorkboxPlugin,
+      ],
+    }),
+  );
+}
 
 /** What a push payload may carry — anything else is ignored. */
 interface PushPayload {

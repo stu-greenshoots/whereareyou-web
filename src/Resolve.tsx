@@ -481,7 +481,7 @@ function OfflineView({ result, offline }: { result: OfflineResult; offline: bool
         lon={position.lon}
         accuracyM={position.cellSizeM}
         offline={offline}
-        tiles="dark"
+        surface="console"
         allowFullscreen
         showViewerLocation
         viewerAvatar={account.avatar}
@@ -565,7 +565,7 @@ function SessionView({ session, offline }: { session: ResolvedWithWarning; offli
         accuracyM={position.accuracyM}
         thirdParty={thirdParty}
         offline={offline}
-        tiles="dark"
+        surface="console"
         sketch={sketch}
         fitContent
         allowFullscreen

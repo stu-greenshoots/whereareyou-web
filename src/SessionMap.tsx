@@ -45,8 +45,8 @@ import {
   type MapTrail,
   type MapZone,
   type PlacedMarker,
-  type TileVariant,
 } from './Map.jsx';
+import type { MapSurface } from './tiles.js';
 import { MarkerPlaceStrip, MarkerStrip } from './MarkerStrip.jsx';
 import { SKETCH_INKS } from './sketch-layer.js';
 import { NotifyControl } from './Notify.jsx';
@@ -293,12 +293,12 @@ export interface SessionMapProps {
   onMarkersShared?: (markers: SessionMarker[]) => void;
   onLeave: () => void;
   /**
-   * Which basemap this surface draws. Defaults to `street` — the live room is
-   * where people navigate to each other by landmark ("outside the Pret"), and
-   * it is the only free raster that actually names shops and pubs. See
-   * TILE_SOURCES in Map.tsx for the measurement behind that.
+   * Which surface this room is drawn on. Defaults to `live` — the room is
+   * where people navigate to each other by landmark ("outside the Pret"),
+   * and the basemap that job needs is not the one the static screens want.
+   * What each surface actually draws lives in `tiles.ts`.
    */
-  tiles?: TileVariant;
+  surface?: MapSurface;
   /** Panel to open as the screen mounts — how a tapped push notification
       lands on the thing it announced (chat, activity, people). */
   initialPanel?: LivePanel;
@@ -319,7 +319,7 @@ export function SessionMap({
   onSketchShared,
   onMarkersShared,
   onLeave,
-  tiles = 'street',
+  surface = 'live',
   initialPanel,
 }: SessionMapProps) {
   const [participants, setParticipants] = useState<Record<string, LiveParticipant>>({});
@@ -1489,7 +1489,7 @@ export function SessionMap({
         lon={pin.lon}
         accuracyM={pin.accuracyM}
         offline={false}
-        tiles={tiles}
+        surface={surface}
         sketch={mySketch}
         onSketchChange={changeSketch}
         peers={peers}
