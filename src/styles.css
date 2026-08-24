@@ -668,6 +668,24 @@
     0 2px 8px #0007;
 }
 
+/* Somebody whose connection DROPPED, still drawn at the last position they
+   sent — disconnecting is not leaving, and a friend who vanishes off the map
+   is worse than a friend who is merely out of date.
+
+   The cue is PATTERN before colour: the white ring breaks into a dashed one
+   (dashed already means "not a hard live fact" on this map — zones, trails),
+   and the fill drains of saturation. That survives colour blindness and both
+   tile sets, where a purely tonal change would not. The dark outline ring
+   from the box-shadow stays, so the silhouette is never lost against pale
+   streets or near-black ones — a ghost still has to be findable.
+
+   Deliberately NOT the treatment for a connected-but-quiet stream: that one
+   is only ever said in words ("last seen"), never drawn. Quiet is not gone. */
+.marker-gone {
+  border-style: dashed;
+  filter: saturate(0.3) opacity(0.72);
+}
+
 /* Leaflet's own controls sit outside our system; tone them down so they do
    not compete with the pin. */
 .leaflet-control-attribution { font-size: 9px !important; opacity: 0.7; }
@@ -1785,6 +1803,38 @@ body.map-first .header { display: none; }
    last-seen fact. */
 .person-meta-stale { color: var(--text); }
 .fact-stale { color: var(--text); }
+
+/* Someone whose connection DROPPED. The opposite emphasis to a quiet stream,
+   and deliberately so: quiet is a live person the room should still be
+   watching, so it is brightened; disconnected is a person who is no longer
+   here, so the row RECEDES. Two states that both keep a last position must
+   not look alike, and colour alone would not separate them — one goes up in
+   contrast, the other goes down, which reads without colour at all.
+
+   Muted, never hidden: the row keeps its full 44px target and stays
+   tappable, because finding a friend who dropped off is exactly the moment
+   someone opens this list.
+   NO italic anywhere in this treatment: only the regular and bold Atkinson
+   faces are shipped, so `font-style: italic` would have the browser slant a
+   typeface drawn specifically for low vision. Opacity and wording carry it. */
+.person-row-gone { opacity: 0.62; }
+.person-row-gone:hover { opacity: 1; background: var(--surface-2); }
+.person-meta-gone { color: var(--text-dim); }
+.fact-gone { color: var(--text-dim); }
+
+/* The quiet divider over the dropped-off group. Uppercase label register —
+   the institutional voice — not a heading and never an alarm. */
+.people-group {
+  margin-top: 4px;
+  padding: 8px 6px 0;
+  border-top: 1px solid var(--rule-soft);
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
 
 /* Small round face for chat, people and cards. */
 .face-dot {

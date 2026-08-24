@@ -46,6 +46,12 @@ export type CompassTarget =
       avatar: string | null;
       /** The sharer keeps their blue everywhere; everyone else is slate. */
       owner: boolean;
+      /**
+       * Their connection dropped — the bearing points at the last position
+       * they sent. Muted the same way the map ghosts them, so the rose never
+       * implies a live person at the other end of it.
+       */
+      disconnected: boolean;
       position: { lat: number; lon: number };
     }
   | {
@@ -267,7 +273,11 @@ export function Compass({
               }}
             >
               {target.kind === 'person' ? (
-                <span className={`compass-person ${target.owner ? 'compass-person-owner' : ''}`}>
+                <span
+                  className={`compass-person ${target.owner ? 'compass-person-owner' : ''} ${
+                    target.disconnected ? 'marker-gone' : ''
+                  }`}
+                >
                   {target.avatar !== null && isSafeAvatar(target.avatar) ? (
                     <img src={target.avatar} alt="" />
                   ) : (

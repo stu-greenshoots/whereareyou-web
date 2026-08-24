@@ -158,15 +158,28 @@ export function isSafeAvatar(avatar: string | undefined): avatar is string {
 // visually different from a self-report, which matters (see below).
 // An avatar sits INSIDE the ring; the ring keeps its colour, because the
 // colour is the information (blue = the caller) and the photo is only a face.
-function pinIcon(colour: string, avatar?: string): L.DivIcon {
+function pinIcon(colour: string, avatar?: string, disconnected = false): L.DivIcon {
   const img = avatarImg(avatar);
+  const classes = ['pin'];
+  if (img !== null) classes.push('pin-has-avatar');
+  if (disconnected) classes.push('marker-gone');
   return L.divIcon({
     className: 'pin-icon',
-    html: `<span class="pin ${img !== null ? 'pin-has-avatar' : ''}" style="--pin-colour:${colour}">${img ?? ''}</span>`,
+    html: `<span class="${classes.join(' ')}" style="--pin-colour:${colour}">${img ?? ''}</span>`,
     iconSize: [26, 26],
     iconAnchor: [13, 13],
   });
 }
+
+/**
+ * How a position whose owner has DROPPED OFF is drawn — the last thing they
+ * sent, not where they are. The cue is a broken white ring plus a drained
+ * fill: pattern first, colour second, so it survives colour blindness and
+ * reads on both Voyager and Dark Matter. Dashed already means "not a hard
+ * fact" everywhere else on this map (zones, trails), so it carries over.
+ */
+const GONE_CIRCLE: L.PathOptions = { dashArray: '4 5', opacity: 0.45, fillOpacity: 0.04 };
+const LIVE_CIRCLE: L.PathOptions = { dashArray: undefined, opacity: 1 };
 
 /** The whole sketch the next shape would produce, or null if it won't fit. */
 function withShapeIfItFits(base: Sketch, shape: Sketch['shapes'][number]): Sketch | null {
@@ -200,6 +213,12 @@ export interface MapPeer {
   position: { lat: number; lon: number; accuracyM: number };
   /** Tapping the dot — opens that participant's card in the live room. */
   onTap?: (() => void) | undefined;
+  /**
+   * Their socket has closed, but the room still holds them: draw the LAST
+   * position they sent, ghosted, never remove it. Disconnecting is not
+   * leaving — a vanished friend is worse than a stale one.
+   */
+  disconnected?: boolean | undefined;
 }
 
 /**
@@ -392,14 +411,14 @@ function chatFlagIcon(): L.DivIcon {
   });
 }
 
-function peerIcon(label: string | undefined, avatar?: string): L.DivIcon {
+function peerIcon(label: string | undefined, avatar?: string, disconnected = false): L.DivIcon {
   const img = avatarImg(avatar);
   const first = (label ?? '').trim().charAt(0).toUpperCase();
   // One character, strictly alphanumeric — this goes into innerHTML.
   const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
   return L.divIcon({
     className: 'peer-dot-icon',
-    html: `<span class="peer-dot">${img ?? initial}</span>`,
+    html: `<span class="peer-dot${disconnected ? ' marker-gone' : ''}">${img ?? initial}</span>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   });
@@ -575,6 +594,12 @@ export interface MapProps {
    * Never set for third-party reports: the pin is not the sharer there.
    */
   pinAvatar?: string | null;
+  /**
+   * Whoever the pin belongs to has dropped their connection. The pin stays
+   * put — this is the last position they sent — and ghosts, the same cue the
+   * peer dots use. Only ever set on a live room's view of somebody ELSE.
+   */
+  pinDisconnected?: boolean;
   /** Same, for the viewer-location dot. */
   viewerAvatar?: string | null;
   /**
@@ -625,6 +650,7 @@ export function Map({
   selfPosition = null,
   followSelf,
   pinAvatar = null,
+  pinDisconnected = false,
   viewerAvatar = null,
   onMapReady,
   className,
@@ -856,7 +882,7 @@ export function Map({
 
     if (markerRef.current === null) {
       const marker = L.marker([lat, lon], {
-        icon: pinIcon(colour, face),
+        icon: pinIcon(colour, face, pinDisconnected),
         draggable: onMoveRef.current !== undefined,
       }).addTo(map);
 
@@ -872,7 +898,7 @@ export function Map({
       markerRef.current = marker;
     } else {
       markerRef.current.setLatLng([lat, lon]);
-      markerRef.current.setIcon(pinIcon(colour, face));
+      markerRef.current.setIcon(pinIcon(colour, face, pinDisconnected));
     }
 
     if (circleRef.current === null) {
@@ -882,11 +908,16 @@ export function Map({
         fillColor: colour,
         fillOpacity: 0.12,
         weight: 1,
+        ...(pinDisconnected ? GONE_CIRCLE : {}),
       }).addTo(map);
     } else {
       circleRef.current.setLatLng([lat, lon]);
       circleRef.current.setRadius(accuracyM);
-      circleRef.current.setStyle({ color: colour, fillColor: colour });
+      circleRef.current.setStyle({
+        color: colour,
+        fillColor: colour,
+        ...(pinDisconnected ? GONE_CIRCLE : { ...LIVE_CIRCLE, fillOpacity: 0.12 }),
+      });
     }
 
     if (trail !== undefined && trail.length > 1) {
@@ -905,7 +936,7 @@ export function Map({
       trailRef.current.remove();
       trailRef.current = null;
     }
-  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin, pinAvatar]);
+  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin, pinAvatar, pinDisconnected]);
 
   // One participant's recent path, shown faintly while their card is open.
   // Neutral slate and dotted: it is history, not a live position or a claim.
@@ -971,12 +1002,16 @@ export function Map({
       peerTapsRef.current[peer.id] = peer.onTap;
       const at: [number, number] = [peer.position.lat, peer.position.lon];
       const existing = layers[peer.id];
-      // Icons carry the label and avatar, so a change to either re-renders
-      // the dot rather than leaving a stale face on a renamed peer.
-      const face = `${peer.label ?? ''}|${peer.avatar ?? ''}`;
+      // Icons carry the label, avatar and connected-ness, so a change to any
+      // of them re-renders the dot rather than leaving a stale face on a
+      // renamed peer — or a live-looking dot on someone who has dropped off.
+      const gone = peer.disconnected ?? false;
+      const face = `${peer.label ?? ''}|${peer.avatar ?? ''}|${gone ? 'gone' : 'live'}`;
       if (existing === undefined) {
         const created = L.marker(at, {
-          icon: peerIcon(peer.label, peer.avatar),
+          icon: peerIcon(peer.label, peer.avatar, gone),
+          // A ghosted dot is still THEIR last position — tapping it must open
+          // their card, which is where "last connected …" is said out loud.
           interactive: peer.onTap !== undefined,
           keyboard: false,
         }).addTo(map);
@@ -993,12 +1028,14 @@ export function Map({
             fillColor: PEER_COLOUR,
             fillOpacity: 0.08,
             weight: 1,
+            ...(gone ? GONE_CIRCLE : {}),
           }).addTo(map),
         };
       } else {
         existing.marker.setLatLng(at);
         if (existing.face !== face) {
-          existing.marker.setIcon(peerIcon(peer.label, peer.avatar));
+          existing.marker.setIcon(peerIcon(peer.label, peer.avatar, gone));
+          existing.circle.setStyle(gone ? GONE_CIRCLE : { ...LIVE_CIRCLE, fillOpacity: 0.08 });
           existing.face = face;
         }
         existing.circle.setLatLng(at);

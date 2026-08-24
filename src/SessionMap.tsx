@@ -135,6 +135,28 @@ function isStale(lastSeenAt: string | undefined, now = Date.now()): boolean {
   return Number.isFinite(age) && age > STALE_AFTER_MS;
 }
 
+/**
+ * Their socket CLOSED and the room kept them — the position on the map is
+ * the last one they sent. Absence of the stamp means connected; the server
+ * fans a disconnect out as a `participant` frame carrying it, never a
+ * `left`, and `left` now always means genuine removal.
+ *
+ * Two states, never conflated. QUIET is a connected phone that has stopped
+ * producing fixes (screen locked, indoors) — `isStale`, said in words only.
+ * GONE is a phone that is no longer in the room at all — this, said in words
+ * AND drawn. Both keep the last position; only one of them means the person
+ * has actually dropped off, and a searcher reading the map has to be able to
+ * tell which.
+ */
+function isGone(participant: LiveParticipant | undefined): boolean {
+  return participant?.disconnectedAt !== undefined;
+}
+
+/** The sharer heads every People group; everyone else keeps roster order. */
+function ownerFirst(a: LiveParticipant, b: LiveParticipant): number {
+  return Number(b.owner) - Number(a.owner);
+}
+
 /** Relative time for feeds and cards — deliberately coarse and calm. */
 function timeAgo(iso: string, now = Date.now()): string {
   const ms = now - Date.parse(iso);
@@ -385,11 +407,37 @@ export function SessionMap({
     [registerParticipant, role],
   );
 
+  /**
+   * GENUINE removal — since live v2.3 that is all `left` ever means: owner
+   * supersession, an over-cap disconnected entry evicted, or a reconnect
+   * merging away its own disconnected entry. A dropped connection does NOT
+   * arrive here; it arrives as a `participant` frame carrying
+   * `disconnectedAt`, and the person stays on the map.
+   *
+   * Every scrap of per-participant state keyed on this id dies with it.
+   * Participant ids are per-connection, so a RECONNECT is a `left` (old id)
+   * immediately followed by a `participant` (new id): keeping anything keyed
+   * on the old id would strand a bubble, a timer or an open card on a
+   * connection that no longer exists. The registries (names, avatars, marker
+   * labels) are deliberately NOT pruned — chat and events outlive the
+   * connection that produced them and still have to render a name.
+   */
   const applyLeft = useCallback((participantId: string) => {
     setParticipants((current) => {
-      const { [participantId]: _gone, ...rest } = current;
+      const { [participantId]: _removed, ...rest } = current;
       return rest;
     });
+    const timer = flagTimersRef.current[participantId];
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      delete flagTimersRef.current[participantId];
+    }
+    setChatFlags((current) => {
+      if (!(participantId in current)) return current;
+      const { [participantId]: _done, ...rest } = current;
+      return rest;
+    });
+    setCard((current) => (current?.id === participantId ? null : current));
   }, []);
 
   /** Whether a chat message is OURS: same connection, or an id this device
@@ -940,6 +988,12 @@ export function SessionMap({
   // own the session, the owner's account photo (if they sent one) when not.
   const pinFace = role === 'owner' ? (avatar ?? null) : (owner?.avatar ?? null);
 
+  // The SHARER can drop off too, and their pin is the one everybody came for.
+  // Ghost it where they last were rather than letting the map keep implying
+  // a live fix. Never on our own map: we cannot be disconnected from
+  // ourselves, and `pin` is our own stream there anyway.
+  const pinGone = role === 'joiner' && isGone(owner);
+
   const peers = useMemo(() => {
     const dots: MapPeer[] = [];
     for (const entry of roster) {
@@ -949,6 +1003,10 @@ export function SessionMap({
         label: entry.name,
         avatar: entry.avatar,
         position: entry.position,
+        // A dropped connection ghosts the dot where they last were; it never
+        // takes it off the map. Still tappable — the card is where the room
+        // is told WHEN they were last connected.
+        disconnected: isGone(entry),
         onTap: () => setCard({ id: entry.id, via: 'map' }),
       });
     }
@@ -1078,6 +1136,9 @@ export function SessionMap({
           label: displayName(entry.id),
           avatar: entry.avatar ?? null,
           owner: entry.owner,
+          // Same rule as the map: a bearing to where they last were is worth
+          // more than no bearing at all, as long as it says it is old.
+          disconnected: isGone(entry),
           position: { lat: entry.position.lat, lon: entry.position.lon },
         });
       }
@@ -1113,7 +1174,17 @@ export function SessionMap({
         ? { lat: initialPosition.lat, lon: initialPosition.lon }
         : null;
 
-  const others = roster.filter((entry) => entry.id !== selfId).length;
+  /**
+   * Roster split. Everyone the room still holds is on the map and in the
+   * People tab; only the CONNECTED ones are counted out loud. "2 others
+   * here" has to mean two people who could answer — a count inflated by
+   * ghosts would quietly rot into a lie over a long session. The ghosts are
+   * discoverable the way they should be: visible, muted, and labelled with
+   * when they were last connected.
+   */
+  const connectedRoster = roster.filter((entry) => !isGone(entry));
+  const goneRoster = roster.filter((entry) => isGone(entry));
+  const others = connectedRoster.filter((entry) => entry.id !== selfId).length;
   const remaining = expiresAt !== null ? timeRemaining(expiresAt) : null;
   const editingMarker = markerEdit !== null ? myMarkers.find((m) => m.id === markerEdit.id) : undefined;
   const cardParticipant = card !== null ? participants[card.id] : undefined;
@@ -1134,6 +1205,46 @@ export function SessionMap({
       ? { lat: cardParticipant.position.lat, lon: cardParticipant.position.lon }
       : null;
   }, [card, cardParticipant, role, selfId, pin.lat, pin.lon, myPosition]);
+
+  /** One People row, rendered identically for both groups — the difference
+      is which time it tells and how muted it reads, never its shape. */
+  const personRow = (entry: LiveParticipant) => {
+    const gone = isGone(entry);
+    // A CONNECTED participant whose stream has gone quiet: say so instead of
+    // "joined" — the row's time should answer "is this dot current?", not
+    // "how long have they been here?". Calm wording, no alarm styling. Never
+    // said of someone who has dropped off: they get "last connected", which
+    // is a different and more final fact, and the two must not be muddled.
+    const stale = !gone && entry.position !== undefined && isStale(entry.lastSeenAt);
+    return (
+      <button
+        key={entry.id}
+        type="button"
+        className={`person-row${gone ? ' person-row-gone' : ''}`}
+        onClick={() => setCard({ id: entry.id, via: 'roster' })}
+      >
+        <Face name={entry.name ?? null} avatar={entry.avatar ?? null} />
+        <span className="person-name">
+          {displayName(entry.id)}
+          {entry.owner ? <span className="person-tag">sharer</span> : null}
+          {entry.position === undefined && !entry.owner ? (
+            <span className="person-tag person-tag-quiet">watching</span>
+          ) : null}
+        </span>
+        <span
+          className={`person-meta${stale ? ' person-meta-stale' : ''}${gone ? ' person-meta-gone' : ''}`}
+        >
+          {gone && entry.disconnectedAt !== undefined
+            ? `last connected ${timeAgo(entry.disconnectedAt)}`
+            : stale && entry.lastSeenAt !== undefined
+              ? `last seen ${timeAgo(entry.lastSeenAt)}`
+              : entry.joinedAt !== undefined
+                ? `joined ${timeAgo(entry.joinedAt)}`
+                : ''}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <div className="share-stage">
@@ -1166,6 +1277,7 @@ export function SessionMap({
         zonesFull={zonesFull}
         markersFull={myMarkers.length >= MAX_SESSION_MARKERS}
         pinAvatar={pinFace}
+        pinDisconnected={pinGone}
         // The locate-me control, present on every other map view. On a
         // sharing surface it recentres on the position we already stream
         // (the blue pin / our own dot); a watcher gets the one-shot
@@ -1365,7 +1477,8 @@ export function SessionMap({
               className={`live-tab ${panel === 'people' ? 'live-tab-active' : ''}`}
               onClick={() => openPanel('people')}
             >
-              People{roster.length > 0 ? ` (${roster.length})` : ''}
+              {/* Connected only — see the roster split. */}
+              People{connectedRoster.length > 0 ? ` (${connectedRoster.length})` : ''}
             </button>
             <button
               type="button"
@@ -1417,39 +1530,21 @@ export function SessionMap({
               {roster.length === 0 ? (
                 <p className="live-empty">No one here yet.</p>
               ) : (
-                [...roster]
-                  .sort((a, b) => Number(b.owner) - Number(a.owner))
-                  .map((entry) => {
-                    // A sharing participant whose stream has gone quiet: say
-                    // so instead of "joined" — the row's time should answer
-                    // "is this dot current?", not "how long have they been
-                    // here?". Calm wording, no alarm styling.
-                    const stale = entry.position !== undefined && isStale(entry.lastSeenAt);
-                    return (
-                      <button
-                        key={entry.id}
-                        type="button"
-                        className="person-row"
-                        onClick={() => setCard({ id: entry.id, via: 'roster' })}
-                      >
-                        <Face name={entry.name ?? null} avatar={entry.avatar ?? null} />
-                        <span className="person-name">
-                          {displayName(entry.id)}
-                          {entry.owner ? <span className="person-tag">sharer</span> : null}
-                          {entry.position === undefined && !entry.owner ? (
-                            <span className="person-tag person-tag-quiet">watching</span>
-                          ) : null}
-                        </span>
-                        <span className={`person-meta${stale ? ' person-meta-stale' : ''}`}>
-                          {stale && entry.lastSeenAt !== undefined
-                            ? `last seen ${timeAgo(entry.lastSeenAt)}`
-                            : entry.joinedAt !== undefined
-                              ? `joined ${timeAgo(entry.joinedAt)}`
-                              : ''}
-                        </span>
-                      </button>
-                    );
-                  })
+                <>
+                  {[...connectedRoster].sort(ownerFirst).map(personRow)}
+                  {/* The ghosts, below the living and plainly labelled. A
+                      dropped connection is not an alarm and not a departure,
+                      so it gets a quiet group rather than a banner — but it
+                      does get said, because someone scanning this list for a
+                      missing friend must find them rather than conclude they
+                      left. */}
+                  {goneRoster.length > 0 && (
+                    <>
+                      <span className="people-group">Not connected</span>
+                      {[...goneRoster].sort(ownerFirst).map(personRow)}
+                    </>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1467,7 +1562,9 @@ export function SessionMap({
 
       {cardParticipant !== undefined &&
         (() => {
-          const cardStale = cardParticipant.position !== undefined && isStale(cardParticipant.lastSeenAt);
+          const cardGone = isGone(cardParticipant);
+          const cardStale =
+            !cardGone && cardParticipant.position !== undefined && isStale(cardParticipant.lastSeenAt);
           const content = (
             <>
               <div className="live-card-head">
@@ -1475,11 +1572,13 @@ export function SessionMap({
                 <div className="live-card-title">
                   <strong>{displayName(cardParticipant.id)}</strong>
                   <span className="person-meta">
-                    {cardParticipant.owner
-                      ? 'Sharing this session'
-                      : cardParticipant.position !== undefined
-                        ? 'In the session'
-                        : 'Watching'}
+                    {cardGone
+                      ? 'Not connected'
+                      : cardParticipant.owner
+                        ? 'Sharing this session'
+                        : cardParticipant.position !== undefined
+                          ? 'In the session'
+                          : 'Watching'}
                   </span>
                 </div>
                 <button
@@ -1495,15 +1594,37 @@ export function SessionMap({
                 {cardParticipant.joinedAt !== undefined && (
                   <span>Joined {timeAgo(cardParticipant.joinedAt)}</span>
                 )}
-                {cardParticipant.lastSeenAt !== undefined && (
-                  <span className={cardStale ? 'fact-stale' : ''}>
-                    Last seen {timeAgo(cardParticipant.lastSeenAt)}
+                {/* When they have dropped off, WHEN THEY WENT is the fact that
+                    matters — it dates the position on the map. "Last seen"
+                    would be answering a question nobody is asking any more,
+                    so it is replaced rather than stacked beside it. */}
+                {cardGone && cardParticipant.disconnectedAt !== undefined ? (
+                  <span className="fact-gone">
+                    Last connected {timeAgo(cardParticipant.disconnectedAt)}
                   </span>
+                ) : (
+                  cardParticipant.lastSeenAt !== undefined && (
+                    <span className={cardStale ? 'fact-stale' : ''}>
+                      Last seen {timeAgo(cardParticipant.lastSeenAt)}
+                    </span>
+                  )
                 )}
                 {cardParticipant.position !== undefined && (
-                  <span>Latest fix ±{Math.round(cardParticipant.position.accuracyM)}m</span>
+                  <span>
+                    {cardGone ? 'Last fix' : 'Latest fix'} ±
+                    {Math.round(cardParticipant.position.accuracyM)}m
+                  </span>
                 )}
               </div>
+              {/* Two different truths, deliberately worded so they can never
+                  be mistaken for each other: a quiet phone might be right
+                  here; a dropped one is a position with a timestamp on it. */}
+              {cardGone && cardParticipant.position !== undefined && (
+                <p className="live-card-trail">
+                  Their connection dropped. This is the last position they sent, not where they
+                  are now.
+                </p>
+              )}
               {cardStale && (
                 <p className="live-card-trail">
                   Nothing heard for a little while — this may not be where they are right now.
