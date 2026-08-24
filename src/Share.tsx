@@ -15,6 +15,7 @@ import { loadActiveShare, persistActiveShare, type ActiveShare } from './local-s
 import { connectLive, newLiveId, type LiveHandle } from './live.js';
 import { NotifyControl } from './Notify.jsx';
 import { CopyRow } from './CopyRow.jsx';
+import { ShareSwitch } from './ShareSwitch.jsx';
 import { allFormats, describeSource, inferSource, timeRemaining } from './formats.js';
 import { useWakeLock } from './wake-lock.js';
 
@@ -190,6 +191,14 @@ export function Share() {
       Pre-mint the flow places at most one; a live room can grow it to the
       protocol cap, and this list is what rides the mint and the resume. */
   const [markers, setMarkers] = useState<SessionMarker[]>([]);
+  /**
+   * The spot just removed, held long enough to put back. Removal here is
+   * instant and unguarded for the same reason it is in a live room — a
+   * marked spot is a claim, not data, and a confirm on every deliberate
+   * removal costs more than the rare mis-tap it prevents — so the safety
+   * net is an undo rather than a gate.
+   */
+  const [removedSpot, setRemovedSpot] = useState<SessionMarker | null>(null);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   /** Requested lifetime of the code. The server clamps it regardless. */
   const [ttl, setTtl] = useState(1800);
@@ -271,6 +280,13 @@ export function Share() {
   sketchRef.current = sketch;
   const markersRef = useRef(markers);
   markersRef.current = markers;
+  // The undo offer expires: a removal that can no longer be taken back must
+  // stop saying it can.
+  useEffect(() => {
+    if (removedSpot === null) return;
+    const timer = window.setTimeout(() => setRemovedSpot(null), 9000);
+    return () => window.clearTimeout(timer);
+  }, [removedSpot]);
   /** Where the flow is, coarsely — drives what Back means right now. */
   const phaseGroupRef = useRef<'start' | 'placed' | 'done'>('start');
   const [history, setHistory] = useState<PastShare[]>(loadHistory);
@@ -1008,7 +1024,7 @@ export function Share() {
         />
         {/* The same floating account control the other map-first screens get.
             Top-right is free on the live map — zoom keeps to the top-left,
-            the live bar and drawing tools to the bottom. */}
+            and the map's own controls sit in the two bottom thumb corners. */}
         <div className="profile-float">
           <ProfileMenu onOpenSavedMap={requestOpenMap} />
         </div>
@@ -1046,11 +1062,11 @@ export function Share() {
           thirdParty={thirdParty}
           pinAvatar={thirdParty ? null : account.avatar}
           offline={!online}
-          /* Place search, as a permanent map control — top-left under the
-             zoom, whether the caller is sharing where they are or reporting
-             somewhere else. It moves the VIEW and marks nothing: a spot is
-             still marked by tapping the map. Withheld while offline, quietly
-             — a field that cannot answer is worse than none. */
+          /* Place search, as a permanent map control — the bottom-left
+             thumb corner, whether the caller is sharing where they are or
+             reporting somewhere else. It moves the VIEW and marks nothing: a
+             spot is still marked by tapping the map. Withheld while offline,
+             quietly — a field that cannot answer is worse than none. */
           placeSearch={online}
           locating={acquiring}
           sketch={located ? sketch : null}
@@ -1155,6 +1171,30 @@ export function Share() {
             : {})}
           fullscreenOverlay={
             located ? (
+              <>
+              {/* The receipt for a removed spot, and the way back from it —
+                  above the sheet, so it never covers the row that removed
+                  it. */}
+              {removedSpot !== null && (
+                <div className="map-sheet undo-toast" role="status">
+                  <p className="undo-toast-text">
+                    {(removedSpot.name ?? '').trim() !== ''
+                      ? `“${(removedSpot.name ?? '').trim()}” removed.`
+                      : 'Marked spot removed.'}
+                  </p>
+                  <button
+                    type="button"
+                    className="button undo-toast-action"
+                    onClick={() => {
+                      const held = removedSpot;
+                      setRemovedSpot(null);
+                      setMarkers((current) => (current.length > 0 ? current : [held]));
+                    }}
+                  >
+                    Undo
+                  </button>
+                </div>
+              )}
               <LocatedSheet
                 position={phase.position}
                 marker={markers[0]?.position ?? null}
@@ -1190,6 +1230,8 @@ export function Share() {
                   if (locatedMapRef.current !== null) disarmPointTool(locatedMapRef.current);
                 }}
                 onRemoveMarker={() => {
+                  const held = markersRef.current[0];
+                  if (held !== undefined) setRemovedSpot(held);
                   setMarkers([]);
                   setIconPickerOpen(false);
                 }}
@@ -1211,6 +1253,7 @@ export function Share() {
                 onRelocate={relocate}
                 onShare={share}
               />
+              </>
             ) : (
               <div className="map-sheet map-sheet-start">
                 {!online && <NoSignalNotice linkUp={linkUp} />}
@@ -1480,24 +1523,7 @@ export function Share() {
           is left guessing what they just turned off. */}
       {mode === 'live' && !expired && online && (
         <div className={`notice share-live-block ${sharingLive ? 'is-on' : ''}`}>
-          <button
-            type="button"
-            className={`button share-switch ${sharingLive ? 'share-switch-on' : ''}`}
-            aria-pressed={sharingLive}
-            onClick={() => setOwnerSharing(!sharingLive)}
-          >
-            <span className="share-switch-label">Sharing my location</span>
-            <span className="share-switch-state">
-              {sharingLive ? (
-                <>
-                  <span className="live-dot" />
-                  On
-                </>
-              ) : (
-                'Off'
-              )}
-            </span>
-          </button>
+          <ShareSwitch on={sharingLive} onChange={setOwnerSharing} />
           <span>
             {sharingLive
               ? 'Anyone holding the code sees your position, and it updates as you move.'
@@ -1829,8 +1855,8 @@ function LocatedSheet({
           marks the spot; the search never marks anything itself. */}
       {thirdParty && marker === null && (
         <p className="marker-row">
-          Tap the map to mark the spot you mean. The search at the top left moves the map there
-          first.
+          Tap the map to mark the spot you mean. The search at the bottom left moves the map
+          there first.
         </p>
       )}
 

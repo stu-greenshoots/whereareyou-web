@@ -52,6 +52,7 @@ import { SKETCH_INKS } from './sketch-layer.js';
 import { NotifyControl } from './Notify.jsx';
 import { OpenInMaps, openInMapsUrl } from './OpenInMaps.jsx';
 import { SaveMapButton } from './SaveMap.jsx';
+import { ShareSwitch } from './ShareSwitch.jsx';
 import { inferSource, timeRemaining } from './formats.js';
 import { useResumeFix, useWakeLock } from './wake-lock.js';
 
@@ -97,6 +98,8 @@ export function panelFromFragment(hash: string): LivePanel | null {
 const CHAT_FLAG_MS = 4000;
 /** An unacked zone-create is withdrawn after this — the echo is the ack. */
 const ZONE_ACK_MS = 15_000;
+/** How long a removed marker can still be put back. */
+const MARKER_UNDO_MS = 9000;
 /** Start showing the chat counter when this near the cap. */
 const CHAT_COUNTER_AT = 50;
 
@@ -337,6 +340,25 @@ export function SessionMap({
    * sharing — which is a different thing from a dropped connection.
    */
   const [sharing, setSharing] = useState(share);
+  /**
+   * WHERE WE ARE, FOR OUR OWN EYES ONLY — the position this device draws for
+   * itself while the sharing switch is OFF.
+   *
+   * Not sharing used to mean not being on your own map either, which is a
+   * real loss: you cannot navigate by a map that has left you off it, and
+   * looking at yourself is not broadcasting.
+   *
+   * This is deliberately a SEPARATE piece of state from `myPosition`, and
+   * the two are never both set. `myPosition` is the position we are
+   * streaming: it is written by the sharing watch, it goes down the socket,
+   * it feeds the self entry in `participants`, and it grows our trail. This
+   * one does NONE of that. It is written by its own watch (below), read only
+   * by the pin, the self dot, follow-mode and locate-me, and it never
+   * touches `participants`, `handleRef`, or anything that persists — so
+   * there is no path from here to the wire, and the room's view of us is
+   * exactly what it was: present, not sharing.
+   */
+  const [localPosition, setLocalPosition] = useState<Position | null>(null);
   /**
    * Once you have shared a position you are a participant rather than a
    * watcher, and the chat composer never goes away again. Monotone on
@@ -757,6 +779,49 @@ export function SessionMap({
     return () => navigator.geolocation.clearWatch(watch);
   }, [sharing]);
 
+  /**
+   * The LOCAL-ONLY watch: where we are while the switch is off, for drawing
+   * on this screen and nowhere else.
+   *
+   * Note what this callback does not do. It does not call
+   * `handleRef.current?.sendPosition` — the one line that would turn a
+   * private fix into a broadcast. It does not write `myPosition`, which is
+   * the state the roster synthesis and the trail read. It writes one piece
+   * of state that only the pin, the self dot and the camera read.
+   *
+   * Coarser and lazier than the sharing watch on purpose: this is
+   * orientation, not evidence, and it should not cost the battery of a
+   * stream nobody is receiving. It also does not hold a wake lock, for the
+   * same reason.
+   *
+   * (There is a belt on the other side too, in live.ts: `sendPosition`
+   * refuses outright while sharing is off, and going dark forgets the last
+   * fix so a reconnect's replay cannot resurrect it. Two independent
+   * guarantees, because this is the one thing here that must not be wrong.)
+   */
+  useEffect(() => {
+    if (sharing || ended !== null || !('geolocation' in navigator)) {
+      setLocalPosition(null);
+      return;
+    }
+    const watch = navigator.geolocation.watchPosition(
+      (fix) => {
+        setLocalPosition({
+          lat: fix.coords.latitude,
+          lon: fix.coords.longitude,
+          accuracyM: fix.coords.accuracy,
+          source: inferSource(fix.coords.accuracy),
+          takenAt: new Date(fix.timestamp).toISOString(),
+        });
+      },
+      // A refused or failed fix is not worth a word here: the map simply
+      // carries on without a dot for us, which is what it did before.
+      undefined,
+      { enableHighAccuracy: false, maximumAge: 30_000 },
+    );
+    return () => navigator.geolocation.clearWatch(watch);
+  }, [sharing, ended]);
+
   // While we are the one streaming, the screen must not sleep out from under
   // the share — a locked phone stops producing fixes. Quiet and best-effort,
   // and RELEASED the moment the switch goes off: holding a screen awake for
@@ -952,13 +1017,52 @@ export function SessionMap({
     if (liveMap !== null) disarmPointTool(liveMap);
   }, [liveMap]);
 
+  /**
+   * The last marker removed, held just long enough to put back. Removal is
+   * instant and unguarded — a marker is a claim, not data, and a confirm
+   * dialog on every deliberate removal is a worse tax than the rare mis-tap
+   * it prevents — so the safety net is on the other side: the toast keeps
+   * the marker (and where it sat in the list) until it times out.
+   */
+  const [removedMarker, setRemovedMarker] = useState<
+    { marker: SessionMarker; index: number } | null
+  >(null);
+
   const removeMarker = useCallback(
     (id: string) => {
-      commitMarkers(myMarkersRef.current.filter((m) => m.id !== id));
+      const current = myMarkersRef.current;
+      const index = current.findIndex((m) => m.id === id);
+      if (index === -1) return;
+      setRemovedMarker({ marker: current[index]!, index });
+      // Full-list replace, exactly like every other marker edit — which is
+      // what fans the removal out to the room and takes the marker's
+      // off-screen edge indicator down with it.
+      commitMarkers(current.filter((m) => m.id !== id));
       setMarkerEdit(null);
     },
     [commitMarkers],
   );
+
+  /** Put it back where it was, and tell the room again. */
+  const undoRemoveMarker = useCallback(() => {
+    const held = removedMarker;
+    if (held === null) return;
+    setRemovedMarker(null);
+    const current = myMarkersRef.current;
+    if (current.length >= MAX_SESSION_MARKERS) return; // somebody filled the gap
+    if (current.some((m) => m.id === held.marker.id)) return; // already back
+    const next = [...current];
+    next.splice(Math.min(held.index, next.length), 0, held.marker);
+    commitMarkers(next);
+  }, [commitMarkers, removedMarker]);
+
+  // The offer expires: a removal that stops being undoable must stop saying
+  // it can be undone.
+  useEffect(() => {
+    if (removedMarker === null) return;
+    const timer = window.setTimeout(() => setRemovedMarker(null), MARKER_UNDO_MS);
+    return () => window.clearTimeout(timer);
+  }, [removedMarker]);
 
   const zonesFull = zones.length >= MAX_SESSION_ZONES;
 
@@ -1116,9 +1220,11 @@ export function SessionMap({
   );
 
   // The blue pin: me if I am the owner, the owner's latest fix if not.
+  // With the switch off, the owner's own pin falls back to the local-only
+  // fix — where we are, drawn for us, sent to nobody.
   const pin =
     role === 'owner'
-      ? (myPosition ?? initialPosition)
+      ? (myPosition ?? localPosition ?? initialPosition)
       : (owner?.position ?? initialPosition);
 
   // The blue pin's face follows the same rule as the pin itself: me when I
@@ -1135,8 +1241,12 @@ export function SessionMap({
    * The blue pin has nobody behind it. Two ways that happens, and both must
    * leave the map honest rather than drawing a phantom:
    *
-   *  - OUR OWN map with the switch off — we are not sending a position, so
-   *    there is nothing of ours to point at.
+   *  - OUR OWN map with the switch off AND no local fix to fall back on —
+   *    nothing at all to point at. With a local fix we DO draw ourselves,
+   *    muted (see `pinMuted`): seeing yourself is not broadcasting, and a
+   *    map that has left you off it is hard to navigate by. Everyone else's
+   *    view is untouched — we are sending nothing, so there is nothing for
+   *    them to draw.
    *  - A JOINER's map where the sharer is in the room but sharing nothing.
    *    Their session still has a code, markers and zones; it just has no
    *    live owner pin. Note the deliberate gap: a sharer not in the roster
@@ -1149,8 +1259,15 @@ export function SessionMap({
    */
   const pinAbsent =
     role === 'owner'
-      ? !sharing
+      ? !sharing && localPosition === null
       : owner !== undefined && !isGone(owner) && owner.position === undefined;
+
+  /**
+   * The pin is drawn from the LOCAL-ONLY fix: this is us, not broadcasting.
+   * Only ever true on our own map — a joiner's blue pin is somebody else's
+   * stream, and nothing local can stand in for it.
+   */
+  const pinMuted = role === 'owner' && !sharing && localPosition !== null;
 
   /** participantId → the colour their pinned path is drawn in, if any. */
   const trailColours = useMemo(
@@ -1181,15 +1298,19 @@ export function SessionMap({
         onTap: () => openCard(entry.id, 'map'),
       });
     }
-    // A sharing joiner appears to themselves too — seeing your own dot is
-    // how you know the room can see you. Tapping it opens your own card,
-    // the same as tapping anyone else's dot.
-    if (role === 'joiner' && sharing && myPosition !== null) {
+    // A joiner appears to themselves too — seeing your own dot is how you
+    // know the room can see you. Tapping it opens your own card, the same as
+    // tapping anyone else's dot. With the switch OFF the dot stays, drawn
+    // from the local-only fix and visibly muted: the room is not receiving
+    // it (nothing is sent), and the mute is what says so.
+    const selfDot = sharing ? myPosition : localPosition;
+    if (role === 'joiner' && selfDot !== null) {
       dots.push({
         id: 'self',
         label: name ?? 'Me',
         avatar,
-        position: myPosition,
+        position: selfDot,
+        muted: !sharing,
         trailColour: (selfId !== null ? trailColours[selfId] : null) ?? null,
         onTap: () => {
           const self = selfIdRef.current;
@@ -1199,7 +1320,18 @@ export function SessionMap({
     }
     return dots;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participants, selfId, role, sharing, myPosition, name, avatar, trailColours, openCard]);
+  }, [
+    participants,
+    selfId,
+    role,
+    sharing,
+    myPosition,
+    localPosition,
+    name,
+    avatar,
+    trailColours,
+    openCard,
+  ]);
 
   const placedMarkers = useMemo(() => {
     const points: PlacedMarker[] = [];
@@ -1503,11 +1635,11 @@ export function SessionMap({
         onPinTap={() => {
           if (pinPersonId !== null) openCard(pinPersonId, 'map');
         }}
-        /* Place search, as a permanent map control — top-left under the zoom,
-           on the owner's map, a joiner's and a watcher's alike. It moves the
-           VIEW and nothing else; marking a spot is still the point tool's
-           job. Withheld while the resolver looks unreachable: a field that
-           cannot answer is worse than none. */
+        /* Place search, as a permanent map control — the bottom-left thumb
+           corner, on the owner's map, a joiner's and a watcher's alike. It
+           moves the VIEW and nothing else; marking a spot is still the point
+           tool's job. Withheld while the resolver looks unreachable: a field
+           that cannot answer is worse than none. */
         placeSearch={online}
         onPlaceMarker={placeOrMoveMarker}
         /* Edit mode: while a marker's strip is open, a plain tap moves that
@@ -1525,31 +1657,63 @@ export function SessionMap({
            and everyone else's dots are untouched — a session with its
            sharing off is still a session. */
         hidePin={pinAbsent}
+        /* Our own pin while the switch is off: drawn from the local fix, for
+           us alone. Muted, and struck through, so "you can see this; nobody
+           else can" is legible at a glance. */
+        pinMuted={pinMuted}
         // The locate-me control, present on every other map view. On a
         // sharing surface it recentres on the position we already stream
         // (the blue pin / our own dot); a watcher gets the one-shot
-        // viewer-dot behaviour. Top-right, clear of the drawing tools and
-        // live bar (bottom) and the zoom control (top-left); the owner's
-        // profile float shifts it down a slot via CSS.
+        // viewer-dot behaviour. Bottom-RIGHT, in its own thumb corner, clear
+        // of the edit tools and search on the left and riding above the live
+        // bar.
         showViewerLocation
-        selfPosition={sharing ? (myPosition ?? (role === 'owner' ? initialPosition : null)) : null}
+        /* Where locate-me and follow-mode aim. Looking at yourself is not
+           broadcasting, so this falls back to the local-only fix with the
+           switch off — the button still takes you to you. */
+        selfPosition={
+          sharing ? (myPosition ?? (role === 'owner' ? initialPosition : null)) : localPosition
+        }
         /* Follow-mode: the owner's view opens centred on THEMSELVES, so it
            follows from the start; a sharing joiner arrives on the sharer's
            pin — not themselves — so follow waits for the locate control.
-           With the switch off there is no self on this map to follow at
-           all, so the mode stands down and the legacy keep-the-pin-in-view
-           framing takes over — and comes back when the switch does. */
-        {...(!sharing
-          ? {}
-          : role === 'owner'
+           With the switch off the mode stays AVAILABLE but disengaged
+           whenever there is a local fix to follow — the camera should not
+           start chasing a position the moment you go quiet, but the locate
+           control must still be able to take you home. With no local fix
+           there is no self on this map at all, so the mode stands down and
+           the legacy keep-the-pin-in-view framing takes over. */
+        {...(sharing
+          ? role === 'owner'
             ? { followSelf: 'on' as const }
-            : { followSelf: 'off' as const })}
+            : { followSelf: 'off' as const }
+          : localPosition !== null
+            ? { followSelf: 'off' as const }
+            : {})}
         viewerAvatar={avatar ?? null}
         onMapReady={setLiveMap}
         fullscreenLocked
         className="map map-fill"
         fullscreenOverlay={
           <>
+            {/* The receipt for a removal, and the way back from it. Above
+                the strips, so it never covers the row you were just in. */}
+            {removedMarker !== null && (
+              <div className="map-sheet undo-toast" role="status">
+                <p className="undo-toast-text">
+                  {(removedMarker.marker.name ?? '').trim() !== ''
+                    ? `“${(removedMarker.marker.name ?? '').trim()}” removed.`
+                    : 'Spot removed.'}
+                </p>
+                <button
+                  type="button"
+                  className="button undo-toast-action"
+                  onClick={undoRemoveMarker}
+                >
+                  Undo
+                </button>
+              </div>
+            )}
             {/* The point tool is armed and nothing is placed yet: the strip
                 opens straight away in its pre-placement state, so the place
                 search is available BEFORE the first tap. The edit strip
@@ -1708,24 +1872,7 @@ export function SessionMap({
                   Everyone gets it: the owner can run a session without a
                   live pin, and someone who came in to watch can start
                   sharing without leaving and rejoining. */}
-              <button
-                type="button"
-                className={`button share-switch ${sharing ? 'share-switch-on' : ''}`}
-                aria-pressed={sharing}
-                onClick={toggleSharing}
-              >
-                <span className="share-switch-label">Sharing my location</span>
-                <span className="share-switch-state">
-                  {sharing ? (
-                    <>
-                      <span className="live-dot" />
-                      On
-                    </>
-                  ) : (
-                    'Off'
-                  )}
-                </span>
-              </button>
+              <ShareSwitch on={sharing} onChange={toggleSharing} />
               {/* The sharer is here and sending nothing. Without this the
                   map reads as broken — no blue pin, no explanation — and a
                   joiner waits for a position that was never coming. */}

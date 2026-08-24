@@ -174,12 +174,14 @@ function pinIcon(
   avatar?: string,
   disconnected = false,
   trailColour?: string | null,
+  muted = false,
 ): L.DivIcon {
   const img = avatarImg(avatar);
   const trail = safeColour(trailColour);
   const classes = ['pin'];
   if (img !== null) classes.push('pin-has-avatar');
   if (disconnected) classes.push('marker-gone');
+  if (muted) classes.push('marker-muted');
   // The pinned-path ring: this marker is the near end of a dotted line
   // somewhere on the map, and this is how you tell WHICH line.
   if (trail !== null) classes.push('marker-trailed');
@@ -200,6 +202,22 @@ function pinIcon(
  */
 const GONE_CIRCLE: L.PathOptions = { dashArray: '4 5', opacity: 0.45, fillOpacity: 0.04 };
 const LIVE_CIRCLE: L.PathOptions = { dashArray: undefined, opacity: 1 };
+
+/**
+ * How a LOCAL-ONLY position is drawn — where you are, on your own map, while
+ * you are broadcasting nothing. Solid ring (dashed is taken: it means a
+ * dropped connection) but drained of colour entirely: the fix is real and
+ * current, it simply is not being sent, and grey is the honest register for
+ * "this is not part of what the room can see".
+ */
+const MUTED_COLOUR = '#64748b';
+const MUTED_CIRCLE: L.PathOptions = {
+  color: MUTED_COLOUR,
+  fillColor: MUTED_COLOUR,
+  dashArray: undefined,
+  opacity: 0.55,
+  fillOpacity: 0.06,
+};
 
 /** The whole sketch the next shape would produce, or null if it won't fit. */
 function withShapeIfItFits(base: Sketch, shape: Sketch['shapes'][number]): Sketch | null {
@@ -244,6 +262,15 @@ export interface MapPeer {
    * a ring of it so the line and the person can be matched by eye.
    */
   trailColour?: string | null | undefined;
+  /**
+   * This dot is drawn from a LOCAL-ONLY fix and is not being broadcast —
+   * only ever set for the viewer's own dot, with their sharing switch off.
+   * Draws greyed and struck through. Deliberately a different cue from
+   * `disconnected`: that one means "their connection dropped", this one
+   * means "you can see this and nobody else can", and confusing the two
+   * would be a lie in both directions.
+   */
+  muted?: boolean | undefined;
 }
 
 /**
@@ -434,6 +461,32 @@ function wireZoneChip(
   }
 }
 
+/**
+ * The EPHEMERAL SEARCH FLAG — a reticle dropped where a picked search result
+ * is, so a jump-cut camera move is unmistakable.
+ *
+ * Deliberately not a pin and not a diamond. Every other symbol on this map is
+ * a claim by a person: blue pin = the caller, amber pin = a report, slate dot
+ * = somebody in the room, slate diamond = a spot somebody marked. A search
+ * result is none of those — nobody asserted anything, the map merely went to
+ * look — so it is drawn as a *viewfinder*: a dashed ring round a small dot,
+ * translucent, with a dashed name chip. Dashed already means "not a hard
+ * fact" everywhere on this map (zones, trails, ghosted dots), and the shape
+ * shares its silhouette with nothing else here.
+ */
+function searchFlagIcon(name: string): L.DivIcon {
+  const chip = name !== '' ? `<span class="search-flag-name">${escapeHtml(name)}</span>` : '';
+  return L.divIcon({
+    className: 'search-flag-icon',
+    html: `<span class="search-flag"><span class="search-flag-ring"></span><span class="search-flag-dot"></span>${chip}</span>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
+
+/** How long a search flag stays before it puts itself away. */
+const SEARCH_FLAG_MS = 12_000;
+
 /** The transient "said something" bubble, anchored just above a dot. */
 function chatFlagIcon(): L.DivIcon {
   return L.divIcon({
@@ -449,13 +502,14 @@ function peerIcon(
   avatar?: string,
   disconnected = false,
   trailColour?: string | null,
+  muted = false,
 ): L.DivIcon {
   const img = avatarImg(avatar);
   const trail = safeColour(trailColour);
   const first = (label ?? '').trim().charAt(0).toUpperCase();
   // One character, strictly alphanumeric — this goes into innerHTML.
   const initial = /^[A-Z0-9]$/.test(first) ? first : '•';
-  const classes = `peer-dot${disconnected ? ' marker-gone' : ''}${trail !== null ? ' marker-trailed' : ''}`;
+  const classes = `peer-dot${disconnected ? ' marker-gone' : ''}${muted ? ' marker-muted' : ''}${trail !== null ? ' marker-trailed' : ''}`;
   return L.divIcon({
     className: 'peer-dot-icon',
     html: `<span class="${classes}"${trail !== null ? ` style="--trail-colour:${trail}"` : ''}>${img ?? initial}</span>`,
@@ -498,11 +552,11 @@ export interface MapProps {
    */
   surface?: MapSurface;
   /**
-   * Shows the place-search control: a persistent map control, top-left under
-   * the zoom buttons, on every surface that sets it. It belongs to the MAP,
-   * not to any marker flow — picking a result moves the VIEW there and does
-   * nothing else (no marker is placed, nothing is renamed); whoever wants a
-   * spot marked places one themselves with the point tool.
+   * Shows the place-search control: a persistent map control, lowest in the
+   * bottom-left thumb column, on every surface that sets it. It belongs to
+   * the MAP, not to any marker flow — picking a result moves the VIEW there
+   * and does nothing else (no marker is placed, nothing is renamed); whoever
+   * wants a spot marked places one themselves with the point tool.
    *
    * Surfaces pass their own connectivity here and withhold it while offline,
    * quietly: a field that cannot answer is worse than none. `offline` hides
@@ -654,6 +708,16 @@ export interface MapProps {
    */
   pinDisconnected?: boolean;
   /**
+   * The pin is drawn from a LOCAL-ONLY fix that is not being broadcast — the
+   * viewer's own position on their own map, with their sharing switch off.
+   * Draws greyed and struck through, so "you can see this, nobody else can"
+   * is legible at a glance. Deliberately a different cue from
+   * `pinDisconnected`: that means somebody's connection dropped, this means
+   * a live fix is deliberately not leaving the device, and the two must
+   * never be mistaken for one another.
+   */
+  pinMuted?: boolean;
+  /**
    * The pin's own path is pinned on the map, in this colour — the same ring
    * the peer dots wear, for the same reason.
    */
@@ -710,6 +774,7 @@ export function Map({
   followSelf,
   pinAvatar = null,
   pinDisconnected = false,
+  pinMuted = false,
   pinTrailColour = null,
   viewerAvatar = null,
   onMapReady,
@@ -802,6 +867,24 @@ export function Map({
   const [viewerNote, setViewerNote] = useState<string | null>(null);
   const viewerMarkerRef = useRef<L.Marker | null>(null);
   const viewerCircleRef = useRef<L.Circle | null>(null);
+
+  /**
+   * The ephemeral search flag. It lives ONLY in this Leaflet layer: it is
+   * never added to `placedMarkers`, never handed to a parent, and so can
+   * never reach any wire — a searched place is not a spot anybody marked,
+   * and the room must not be told about it. Cleared on a timer, on the next
+   * map gesture, and whenever another result is picked.
+   */
+  const searchFlagRef = useRef<L.Marker | null>(null);
+  const searchFlagTimerRef = useRef<number | null>(null);
+  const clearSearchFlag = () => {
+    if (searchFlagTimerRef.current !== null) {
+      window.clearTimeout(searchFlagTimerRef.current);
+      searchFlagTimerRef.current = null;
+    }
+    searchFlagRef.current?.remove();
+    searchFlagRef.current = null;
+  };
   // Records, not Maps — the global Map is shadowed by this component's name.
   const peerLayersRef = useRef<Record<string, { marker: L.Marker; circle: L.Circle; face: string }>>({});
   const peerTapsRef = useRef<Record<string, (() => void) | undefined>>({});
@@ -879,6 +962,11 @@ export function Map({
       sketchHandleRef.current = null;
       viewerMarkerRef.current = null;
       viewerCircleRef.current = null;
+      if (searchFlagTimerRef.current !== null) {
+        window.clearTimeout(searchFlagTimerRef.current);
+        searchFlagTimerRef.current = null;
+      }
+      searchFlagRef.current = null;
       peerLayersRef.current = {};
       remoteSketchesRef.current = {};
       placedLayersRef.current = {};
@@ -915,6 +1003,26 @@ export function Map({
     // setFollow only writes state; it cannot go stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, followAvailable]);
+
+  // The search flag is a RECEIPT for a camera move that already happened, not
+  // a thing that lives on the map — so the moment the person takes hold of the
+  // camera themselves it has done its job and goes. Gated on the same
+  // programmatic-move bracket as follow-mode: our own setView (including the
+  // one that drops the flag in the first place) must not clear it.
+  useEffect(() => {
+    if (map === null) return;
+    const onUserMove = () => {
+      if (programmaticMovesRef.current === 0) clearSearchFlag();
+    };
+    map.on('dragstart', onUserMove);
+    map.on('zoomstart', onUserMove);
+    return () => {
+      map.off('dragstart', onUserMove);
+      map.off('zoomstart', onUserMove);
+    };
+    // clearSearchFlag only touches refs; it cannot go stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
 
   // The point tool's parent-facing plumbing. The disarm hook mirrors the
   // follow hooks above: a parent holding only the Leaflet map can put the
@@ -977,7 +1085,7 @@ export function Map({
 
     if (markerRef.current === null) {
       const marker = L.marker([lat, lon], {
-        icon: pinIcon(colour, face, pinDisconnected, pinTrailColour),
+        icon: pinIcon(colour, face, pinDisconnected, pinTrailColour, pinMuted),
         draggable: onMoveRef.current !== undefined,
       }).addTo(map);
 
@@ -993,7 +1101,7 @@ export function Map({
       markerRef.current = marker;
     } else {
       markerRef.current.setLatLng([lat, lon]);
-      markerRef.current.setIcon(pinIcon(colour, face, pinDisconnected, pinTrailColour));
+      markerRef.current.setIcon(pinIcon(colour, face, pinDisconnected, pinTrailColour, pinMuted));
     }
 
     if (circleRef.current === null) {
@@ -1003,7 +1111,7 @@ export function Map({
         fillColor: colour,
         fillOpacity: 0.12,
         weight: 1,
-        ...(pinDisconnected ? GONE_CIRCLE : {}),
+        ...(pinDisconnected ? GONE_CIRCLE : pinMuted ? MUTED_CIRCLE : {}),
       }).addTo(map);
     } else {
       circleRef.current.setLatLng([lat, lon]);
@@ -1011,7 +1119,11 @@ export function Map({
       circleRef.current.setStyle({
         color: colour,
         fillColor: colour,
-        ...(pinDisconnected ? GONE_CIRCLE : { ...LIVE_CIRCLE, fillOpacity: 0.12 }),
+        ...(pinDisconnected
+          ? GONE_CIRCLE
+          : pinMuted
+            ? MUTED_CIRCLE
+            : { ...LIVE_CIRCLE, fillOpacity: 0.12 }),
       });
     }
 
@@ -1031,7 +1143,19 @@ export function Map({
       trailRef.current.remove();
       trailRef.current = null;
     }
-  }, [map, lat, lon, accuracyM, thirdParty, trail, hidePin, pinAvatar, pinDisconnected, pinTrailColour]);
+  }, [
+    map,
+    lat,
+    lon,
+    accuracyM,
+    thirdParty,
+    trail,
+    hidePin,
+    pinAvatar,
+    pinDisconnected,
+    pinMuted,
+    pinTrailColour,
+  ]);
 
   // The pinned participant paths — add, restyle, extend and remove to match
   // the list, exactly like the peer dots. Dotted and semi-transparent: a path
@@ -1116,11 +1240,12 @@ export function Map({
       // of them re-renders the dot rather than leaving a stale face on a
       // renamed peer — or a live-looking dot on someone who has dropped off.
       const gone = peer.disconnected ?? false;
+      const muted = peer.muted ?? false;
       const trailColour = peer.trailColour ?? null;
-      const face = `${peer.label ?? ''}|${peer.avatar ?? ''}|${gone ? 'gone' : 'live'}|${trailColour ?? ''}`;
+      const face = `${peer.label ?? ''}|${peer.avatar ?? ''}|${gone ? 'gone' : muted ? 'muted' : 'live'}|${trailColour ?? ''}`;
       if (existing === undefined) {
         const created = L.marker(at, {
-          icon: peerIcon(peer.label, peer.avatar, gone, trailColour),
+          icon: peerIcon(peer.label, peer.avatar, gone, trailColour, muted),
           // A ghosted dot is still THEIR last position — tapping it must open
           // their card, which is where "last connected …" is said out loud.
           interactive: peer.onTap !== undefined,
@@ -1139,14 +1264,20 @@ export function Map({
             fillColor: PEER_COLOUR,
             fillOpacity: 0.08,
             weight: 1,
-            ...(gone ? GONE_CIRCLE : {}),
+            ...(gone ? GONE_CIRCLE : muted ? MUTED_CIRCLE : {}),
           }).addTo(map),
         };
       } else {
         existing.marker.setLatLng(at);
         if (existing.face !== face) {
-          existing.marker.setIcon(peerIcon(peer.label, peer.avatar, gone, trailColour));
-          existing.circle.setStyle(gone ? GONE_CIRCLE : { ...LIVE_CIRCLE, fillOpacity: 0.08 });
+          existing.marker.setIcon(peerIcon(peer.label, peer.avatar, gone, trailColour, muted));
+          existing.circle.setStyle(
+            gone
+              ? GONE_CIRCLE
+              : muted
+                ? MUTED_CIRCLE
+                : { ...LIVE_CIRCLE, color: PEER_COLOUR, fillColor: PEER_COLOUR, fillOpacity: 0.08 },
+          );
           existing.face = face;
         }
         existing.circle.setLatLng(at);
@@ -1482,10 +1613,12 @@ export function Map({
   }, [viewerNote]);
 
   // So does the "moved to X" one: it is a receipt for a camera move that has
-  // already happened, not a state the map is in.
+  // already happened, not a state the map is in. Same lifetime as the search
+  // flag it describes, so the words and the thing on the map arrive and leave
+  // together rather than contradicting each other for eight seconds.
   useEffect(() => {
     if (flewTo === null) return;
-    const timer = window.setTimeout(() => setFlewTo(null), 4000);
+    const timer = window.setTimeout(() => setFlewTo(null), SEARCH_FLAG_MS);
     return () => window.clearTimeout(timer);
   }, [flewTo]);
 
@@ -1496,6 +1629,9 @@ export function Map({
     if (searchAvailable) return;
     setSearchOpen(false);
     setFlewTo(null);
+    clearSearchFlag();
+    // clearSearchFlag only touches refs; it cannot go stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchAvailable]);
 
   // The moment the wide-open start map gets its first real fix, jump to
@@ -1705,7 +1841,18 @@ export function Map({
    *
    * Always a jump-cut, never a glide, for the reason `centreOnPlacement`
    * gives: `event.latlng` is unreliable while an animation runs, and arriving
-   * somewhere is often followed immediately by a tap.
+   * somewhere is often followed immediately by a tap. That is not a
+   * theoretical worry here — on the share screen and in a live room a plain
+   * map tap is LIVE at this exact moment (it places a spot, or moves the one
+   * whose strip is open, or moves the pin), and the point tool can be armed
+   * with the search panel open, so a hurried tap during a glide would land a
+   * marker somewhere nobody chose. So the camera still cuts.
+   *
+   * "Obvious" is bought instead with cues that cannot corrupt a coordinate,
+   * because they animate ELEMENTS rather than the viewport: an ephemeral
+   * search flag lands on the place with a one-shot ring and the place's name
+   * on it, and the control says where it went. Before and after are
+   * unmistakably different; `event.latlng` stays exact throughout.
    */
   const flyToPlace = (lat: number, lon: number, accuracyM: number, label: string) => {
     if (map === null) return;
@@ -1743,9 +1890,26 @@ export function Map({
       zoom,
     );
     moveCamera(() => map.setView(centre, zoom, { animate: false }));
-    // Say where it went. A map that jumps without a word is disorienting, and
-    // this is also where the person can see that nothing was marked.
+
+    // Land the flag ON the place (not on the offset centre) — the jump-cut
+    // gives no sense of travel, so the arrival has to announce itself. It
+    // goes down AFTER the camera move, so the movestart our own setView
+    // fires cannot clear the flag we are about to drop.
     const name = placeShortName(label, 40);
+    clearSearchFlag();
+    searchFlagRef.current = L.marker([lat, lon], {
+      icon: searchFlagIcon(name),
+      interactive: false,
+      keyboard: false,
+      // Above the tiles and the accuracy circles, below the pins and
+      // diamonds: a search result must never obscure a person or a claim.
+      zIndexOffset: -200,
+    }).addTo(map);
+    searchFlagTimerRef.current = window.setTimeout(clearSearchFlag, SEARCH_FLAG_MS);
+
+    // Say where it went, in words as well. A map that jumps without a word is
+    // disorienting, and this is also where the person can see that nothing
+    // was marked.
     setFlewTo(name !== '' ? name : null);
   };
 
@@ -1810,12 +1974,7 @@ export function Map({
     );
   };
 
-  // The top-right controls stack downward in a fixed order; each one's
-  // offset depends only on which controls precede it.
   const isFull = fullscreen || fullscreenLocked;
-  const expandSlot = onLocate !== undefined ? 2 : 1;
-  const viewerSlot = (onLocate !== undefined ? 1 : 0) + (allowFullscreen ? 1 : 0) + 1;
-  const slotClass = (slot: number) => (slot === 2 ? 'map-stack-2' : slot === 3 ? 'map-stack-3' : '');
 
   const shapeCount = sketch?.shapes.length ?? 0;
 
@@ -1869,66 +2028,10 @@ export function Map({
         className={`${className ?? 'map'}${basemap.darkFilter ? ' map-tiles-dark' : ''}`}
       />
 
-      {/* Place search — top-LEFT, tucked under Leaflet's zoom buttons. The
-          right-hand column is spoken for on every surface (the account
-          control, then locate, then the viewer's own locate), the foot of the
-          map belongs to the tools and the live bar, and the top centre
-          carries the wordmark on the share screen. This is the one edge that
-          is free everywhere, so the control sits in the same place on all of
-          them. */}
-      {searchAvailable && (
-        <>
-          <button
-            type="button"
-            className={`map-search-toggle ${searchOpen ? 'map-search-open' : ''}`}
-            aria-label="Search for a place"
-            aria-expanded={searchOpen}
-            title="Search for a place"
-            onClick={() => {
-              setFlewTo(null);
-              setSearchOpen((open) => !open);
-            }}
-          >
-            <SearchIcon />
-          </button>
-          {searchOpen && (
-            <div className="map-search-panel">
-              <PlaceSearch
-                onPick={flyToPlace}
-                failText="Search did not respond — you can still pan and zoom the map yourself."
-                emptyText="Nothing found for that. Try adding a town."
-              />
-            </div>
-          )}
-          {!searchOpen && flewTo !== null && <p className="map-search-note">Moved to {flewTo}</p>}
-        </>
-      )}
-
-      {onLocate !== undefined && (
-        <button
-          type="button"
-          className={`map-locate ${followAvailable && following ? 'map-locate-following' : ''}`}
-          onClick={handleLocate}
-          disabled={locating}
-          aria-label="Move the pin to my current location"
-          title={followAvailable && following ? 'Following your position' : 'Pin my current location'}
-          {...(followAvailable ? { 'aria-pressed': following } : {})}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" className={locating ? 'locating' : ''}>
-            <circle cx="12" cy="12" r="4" fill="currentColor" />
-            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.6" />
-          </svg>
-        </button>
-      )}
-
       {allowFullscreen && !fullscreenLocked && !fullscreen && (
         <button
           type="button"
-          className={`map-locate ${slotClass(expandSlot)}`}
+          className="map-locate map-expand"
           onClick={openFullscreen}
           aria-label="Make the map full screen"
           title="Full screen"
@@ -1943,171 +2046,270 @@ export function Map({
         </button>
       )}
 
-      {showViewerLocation && (
-        <button
-          type="button"
-          className={`map-locate ${slotClass(viewerSlot)} ${followAvailable && following ? 'map-locate-following' : ''}`}
-          onClick={locateViewer}
-          disabled={viewerBusy}
-          aria-label="Show where I am on the map"
-          title={followAvailable && following ? 'Following your position' : 'Show where I am'}
-          {...(followAvailable ? { 'aria-pressed': following } : {})}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" className={viewerBusy ? 'locating' : ''}>
-            <circle cx="12" cy="12" r="4" fill="currentColor" />
-            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.6" />
-            <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.6" />
-          </svg>
-        </button>
-      )}
+      {/* ---- The thumb corners ------------------------------------------
+          The map's own controls sit at the FOOT of the map, where a hand
+          holding a phone already is — the top edge is a stretch on a large
+          screen and, on the share and live surfaces, spoken for by the
+          wordmark and the account control. Two columns, one per thumb, both
+          riding on top of whatever the bottom stack currently is (its live
+          height is published as --map-bottom-h) so a sheet, a strip or the
+          live bar can never bury them.
 
-      {viewerNote !== null && <p className="map-viewer-note">{viewerNote}</p>}
+          LEFT, bottom-up: the edit tools, then the place search. RIGHT: the
+          locate control. That is the owner's own layout, and it is the same
+          on every surface that has these controls, so the muscle memory
+          holds from the share screen to a live room to the console. */}
+      {(onSketchChange !== undefined || searchAvailable) && (
+        <div className="map-controls map-controls-bl">
+          {/* The armed point tool gets no note of its own: arming it makes
+              the parent mount the pre-placement marker strip
+              (onMarkerToolChange), and that strip carries the hint. */}
+          {sketchFull && (
+            <p className="map-tools-note">
+              The sketch is full. Undo or clear a shape to draw more.
+            </p>
+          )}
 
-      <div className="map-bottom-stack">
-      {/* The armed point tool gets no note of its own: arming it makes the
-          parent mount the pre-placement marker strip (onMarkerToolChange),
-          and that strip carries the hint and the place search. */}
-      {sketchFull && (
-        <p className="map-tools-note">
-          The sketch is full. Undo or clear a shape to draw more.
-        </p>
-      )}
+          {toolsOpen && onZoneDraw !== undefined && zonesFull && (
+            <p className="map-tools-note">
+              This session has all {MAX_SESSION_ZONES} zones. Remove one to draw another.
+            </p>
+          )}
 
-      {toolsOpen && onZoneDraw !== undefined && zonesFull && (
-        <p className="map-tools-note">
-          This session has all {MAX_SESSION_ZONES} zones. Remove one to draw another.
-        </p>
-      )}
+          {toolsOpen && onPlaceMarker !== undefined && markersFull && (
+            <p className="map-tools-note">
+              You have placed all {MAX_SESSION_MARKERS} of your markers. Remove one to place
+              another.
+            </p>
+          )}
 
-      {toolsOpen && onPlaceMarker !== undefined && markersFull && (
-        <p className="map-tools-note">
-          You have placed all {MAX_SESSION_MARKERS} of your markers. Remove one to place another.
-        </p>
-      )}
-
-      {onSketchChange !== undefined && (
-        <div className="map-tools" role="toolbar" aria-label="Drawing tools">
-          {!toolsOpen ? (
-            <button
-              type="button"
-              className="map-tool"
-              aria-label="Draw on the map"
-              title="Draw on the map"
-              onClick={() => {
-                setToolsOpen(true);
-                setActiveTool('pen');
-              }}
-            >
-              <PenIcon />
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="map-tool"
-                aria-label="Stop drawing"
-                title="Stop drawing"
-                onClick={() => {
-                  setToolsOpen(false);
-                  setInkOpen(false);
-                  setActiveTool('none');
-                }}
-              >
-                <CloseIcon />
-              </button>
-              {toolButton('pen', 'Draw freehand', <PenIcon />)}
-              {toolButton('arrow', 'Draw an arrow', <ArrowIcon />)}
-              {toolButton(
-                'circle',
-                onZoneDraw !== undefined ? 'Draw a zone' : 'Draw a circle',
-                <CircleIcon />,
-                onZoneDraw !== undefined && zonesFull,
-              )}
-              {onPlaceMarker !== undefined && (
+          {onSketchChange !== undefined && (
+            <div className="map-tools" role="toolbar" aria-label="Drawing tools">
+              {!toolsOpen ? (
                 <button
                   type="button"
-                  className={`map-tool ${activeTool === 'marker' ? 'map-tool-active' : ''}`}
-                  aria-label="Place a point"
-                  aria-pressed={activeTool === 'marker'}
-                  title="Place a point"
-                  disabled={markersFull}
+                  className="map-tool"
+                  aria-label="Draw on the map"
+                  title="Draw on the map"
                   onClick={() => {
-                    setInkOpen(false);
-                    setActiveTool((current) => (current === 'marker' ? 'none' : 'marker'));
+                    setToolsOpen(true);
+                    setActiveTool('pen');
                   }}
                 >
-                  <PointIcon />
+                  <PenIcon />
                 </button>
-              )}
-              <span className="map-tools-rule" aria-hidden="true" />
-              {/* One swatch; the palette pops UPWARD so the toolbar stays
-                  one row and the map keeps the screen. */}
-              <span className="map-ink-wrap">
-                <button
-                  type="button"
-                  className="map-ink"
-                  style={{ ['--ink' as string]: SKETCH_INKS[ink] }}
-                  aria-label="Change ink colour"
-                  aria-expanded={inkOpen}
-                  onClick={() => setInkOpen((open) => !open)}
-                />
-                {inkOpen && (
-                  <span className="map-ink-pop">
-                    {SKETCH_INKS.map((hex, index) => (
-                      <button
-                        key={hex}
-                        type="button"
-                        className={`map-ink ${ink === index ? 'map-ink-active' : ''}`}
-                        style={{ ['--ink' as string]: hex }}
-                        aria-label={`Ink ${index + 1}`}
-                        aria-pressed={ink === index}
-                        onClick={() => {
-                          setInk(index as SketchColour);
-                          setInkOpen(false);
-                        }}
-                      />
-                    ))}
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="map-tool"
+                    aria-label="Stop drawing"
+                    title="Stop drawing"
+                    onClick={() => {
+                      setToolsOpen(false);
+                      setInkOpen(false);
+                      setActiveTool('none');
+                    }}
+                  >
+                    <CloseIcon />
+                  </button>
+                  {toolButton('pen', 'Draw freehand', <PenIcon />)}
+                  {toolButton('arrow', 'Draw an arrow', <ArrowIcon />)}
+                  {toolButton(
+                    'circle',
+                    onZoneDraw !== undefined ? 'Draw a zone' : 'Draw a circle',
+                    <CircleIcon />,
+                    onZoneDraw !== undefined && zonesFull,
+                  )}
+                  {onPlaceMarker !== undefined && (
+                    <button
+                      type="button"
+                      className={`map-tool ${activeTool === 'marker' ? 'map-tool-active' : ''}`}
+                      aria-label="Place a point"
+                      aria-pressed={activeTool === 'marker'}
+                      title="Place a point"
+                      disabled={markersFull}
+                      onClick={() => {
+                        setInkOpen(false);
+                        setActiveTool((current) => (current === 'marker' ? 'none' : 'marker'));
+                      }}
+                    >
+                      <PointIcon />
+                    </button>
+                  )}
+                  <span className="map-tools-rule" aria-hidden="true" />
+                  {/* One swatch; the palette pops UPWARD so the toolbar stays
+                      one row and the map keeps the screen. */}
+                  <span className="map-ink-wrap">
+                    <button
+                      type="button"
+                      className="map-ink"
+                      style={{ ['--ink' as string]: SKETCH_INKS[ink] }}
+                      aria-label="Change ink colour"
+                      aria-expanded={inkOpen}
+                      onClick={() => setInkOpen((open) => !open)}
+                    />
+                    {inkOpen && (
+                      <span className="map-ink-pop">
+                        {SKETCH_INKS.map((hex, index) => (
+                          <button
+                            key={hex}
+                            type="button"
+                            className={`map-ink ${ink === index ? 'map-ink-active' : ''}`}
+                            style={{ ['--ink' as string]: hex }}
+                            aria-label={`Ink ${index + 1}`}
+                            aria-pressed={ink === index}
+                            onClick={() => {
+                              setInk(index as SketchColour);
+                              setInkOpen(false);
+                            }}
+                          />
+                        ))}
+                      </span>
+                    )}
                   </span>
-                )}
-              </span>
-              <span className="map-tools-rule" aria-hidden="true" />
-              <button
-                type="button"
-                className="map-tool"
-                aria-label="Undo the last shape"
-                title="Undo the last shape"
-                disabled={shapeCount === 0}
-                onClick={undoShape}
-              >
-                <UndoIcon />
-              </button>
-              <button
-                type="button"
-                className="map-tool"
-                aria-label="Clear the drawing"
-                title="Clear the drawing"
-                disabled={shapeCount === 0}
-                onClick={clearSketch}
-              >
-                <ClearIcon />
-              </button>
-            </>
+                  <span className="map-tools-rule" aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="map-tool"
+                    aria-label="Undo the last shape"
+                    title="Undo the last shape"
+                    disabled={shapeCount === 0}
+                    onClick={undoShape}
+                  >
+                    <UndoIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="map-tool"
+                    aria-label="Clear the drawing"
+                    title="Clear the drawing"
+                    disabled={shapeCount === 0}
+                    onClick={clearSketch}
+                  >
+                    <ClearIcon />
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* The receipt for the last pick, riding directly on top of the
+              control that produced it — and gone by the time the search flag
+              on the map is. */}
+          {!searchOpen && flewTo !== null && (
+            <p className="map-search-note">
+              <span className="map-search-note-label">Moved to</span>
+              <span className="map-search-note-place">{flewTo}</span>
+            </p>
+          )}
+
+          {searchAvailable && (
+            <button
+              type="button"
+              className={`map-search-toggle ${searchOpen ? 'map-search-open' : ''}`}
+              aria-label="Search for a place"
+              aria-expanded={searchOpen}
+              title="Search for a place"
+              onClick={() => {
+                setFlewTo(null);
+                setSearchOpen((open) => !open);
+              }}
+            >
+              <SearchIcon />
+            </button>
           )}
         </div>
       )}
 
-      {offline && (
-        <p className="map-offline">
-          Map pictures need a connection. Your position is still exact — it is written out below.
-        </p>
+      {/* The field opens UPWARD, out of its own glyph, and never over it: the
+          way out stays visible and in the same place. Its own layer rather
+          than a child of the column, so its height is free of the column's
+          flow and it can take whatever room is left above the bottom stack. */}
+      {searchAvailable && searchOpen && (
+        <div className="map-search-panel" role="dialog" aria-label="Search for a place">
+          <div className="map-search-head">
+            <span className="map-search-title">Search for a place</span>
+            <button
+              type="button"
+              className="map-search-close"
+              aria-label="Close the search"
+              onClick={() => setSearchOpen(false)}
+            >
+              <CloseIcon />
+            </button>
+          </div>
+          <PlaceSearch
+            onPick={flyToPlace}
+            failText="Search did not respond. You can still pan and zoom the map yourself."
+            emptyText="Nothing found for that. Try adding a town or a postcode."
+          />
+          {/* Said once, plainly, where the answer is: a pick is navigation,
+              not a claim. It is the whole reason the search left the marker
+              strip, and the one thing a person could reasonably assume
+              wrongly. */}
+          <p className="map-search-foot">Picking a place moves the map. It marks nothing.</p>
+        </div>
       )}
 
-      {isFull && fullscreenOverlay}
+      <div className="map-controls map-controls-br">
+        {viewerNote !== null && <p className="map-viewer-note">{viewerNote}</p>}
+
+        {onLocate !== undefined && (
+          <button
+            type="button"
+            className={`map-locate ${followAvailable && following ? 'map-locate-following' : ''}`}
+            onClick={handleLocate}
+            disabled={locating}
+            aria-label="Move the pin to my current location"
+            title={followAvailable && following ? 'Following your position' : 'Pin my current location'}
+            {...(followAvailable ? { 'aria-pressed': following } : {})}
+          >
+            <LocateIcon busy={locating} />
+          </button>
+        )}
+
+        {showViewerLocation && (
+          <button
+            type="button"
+            className={`map-locate ${followAvailable && following ? 'map-locate-following' : ''}`}
+            onClick={locateViewer}
+            disabled={viewerBusy}
+            aria-label="Show where I am on the map"
+            title={followAvailable && following ? 'Following your position' : 'Show where I am'}
+            {...(followAvailable ? { 'aria-pressed': following } : {})}
+          >
+            <LocateIcon busy={viewerBusy} />
+          </button>
+        )}
+      </div>
+
+      <div className="map-bottom-stack">
+        {offline && (
+          <p className="map-offline">
+            Map pictures need a connection. Your position is still exact — it is written out below.
+          </p>
+        )}
+
+        {isFull && fullscreenOverlay}
       </div>
     </div>
+  );
+}
+
+/** The locate crosshair, shared by both locate controls — they are the same
+    gesture ("put me on this map") aimed at different subjects, and drawing
+    them twice is how the two drifted apart before. */
+function LocateIcon({ busy }: { busy: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={busy ? 'locating' : ''}>
+      <circle cx="12" cy="12" r="4" fill="currentColor" />
+      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.6" />
+      <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.6" />
+      <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.6" />
+      <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
   );
 }
 
@@ -2200,7 +2402,9 @@ function CloseIcon() {
   );
 }
 
-function ClearIcon() {
+/** A bin — "get rid of this". Shared with the marker strip's Remove, because
+    one vocabulary for one meaning is the whole point of having a small one. */
+export function ClearIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />

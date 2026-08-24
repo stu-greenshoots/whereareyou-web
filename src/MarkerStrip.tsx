@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { MAX_MARKER_NAME_CHARS } from '@whereareyou/protocol';
 import type { MarkerIcon } from '@whereareyou/protocol';
-import { MARKER_GLYPHS, MarkerIconPicker } from './Map.jsx';
+import { ClearIcon, MARKER_GLYPHS, MarkerIconPicker } from './Map.jsx';
 
 /**
  * The slim strip that follows a placed point — ONE row: icon chip, name,
@@ -24,8 +24,18 @@ import { MARKER_GLYPHS, MarkerIconPicker } from './Map.jsx';
  * control on the map itself, where a pick moves the VIEW and marks nothing.
  * The strip is for the spot you have already chosen; finding somewhere on
  * the map is a different job and no longer borrows this row to do it.
- * Removal and "open in maps" are edit-time actions, so they live in the
- * expanded icon panel rather than costing the default flow a button.
+ *
+ * REMOVE IS ON THE DEFAULT ROW. It used to live inside the icon chip's
+ * expanded panel — one fold too deep: the owner of this app could not find
+ * how to delete a marker on his own live map, which is the whole reason this
+ * row changed. It sits at the FAR LEFT, the maximum distance from Done at
+ * the far right, because it is the one control here that undoes work; and
+ * every surface pairs it with an undo toast, so a mis-tap costs a tap rather
+ * than a marker. Cheap-to-undo beats a confirm dialog: a confirm would tax
+ * every deliberate removal to guard against a rare accident, in a UI whose
+ * users are one-handed and in a hurry. "Open in maps" stays folded behind
+ * the chip — it is a way OUT of the app, never a rival to the two things
+ * this row is for.
  */
 export function MarkerStrip({
   icon,
@@ -59,16 +69,20 @@ export function MarkerStrip({
               setIconsOpen(false);
             }}
           />
-          <div className="marker-strip-pop-row">
-            {extraAction}
-            <button type="button" className="link-button marker-strip-remove" onClick={onRemove}>
-              Remove this spot
-            </button>
-          </div>
+          {extraAction !== undefined && <div className="marker-strip-pop-row">{extraAction}</div>}
         </div>
       )}
 
       <div className="marker-strip">
+        <button
+          type="button"
+          className="marker-strip-remove"
+          aria-label="Remove this spot"
+          title="Remove this spot"
+          onClick={onRemove}
+        >
+          <ClearIcon />
+        </button>
         <button
           type="button"
           className={`sheet-icon marker-strip-chip ${iconsOpen ? 'sheet-icon-active' : ''}`}

@@ -595,15 +595,43 @@
 
 .map-frame { position: relative; }
 
-/* "Locate me" control — top-right, above Leaflet's panes, clear of the +/- zoom
-   buttons on the left. */
-.map-locate {
+/* ---- The two thumb columns ---------------------------------------------
+   The map's own controls live at the FOOT of the map, one column per thumb,
+   because that is where a hand holding a phone already is — reaching the top
+   edge of a modern phone one-handed is a stretch, and on the share and live
+   surfaces the top is spoken for anyway (the wordmark centre, the account
+   control right, Leaflet's zoom left).
+
+   LEFT, reading bottom-up: the place search sits lowest, with the edit tools
+   directly above it. RIGHT: locate me. That is the owner's own layout, and
+   both columns render identically on every surface that has these controls,
+   so the muscle memory survives moving between the share screen, a live room
+   and the console.
+
+   Both columns RIDE ON TOP of the bottom stack rather than joining it: they
+   are anchored to --map-bottom-h, the stack's live height (published by
+   Map.tsx from a ResizeObserver), so a sheet opening, a marker strip
+   appearing or the live bar wrapping pushes them up instead of burying them.
+   The left column stops short of the right one (`right: 60px`) so the
+   toolbar wraps rather than growing under the locate button. */
+.map-controls {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  bottom: calc(var(--map-bottom-h, 0px) + 10px);
   z-index: 700;
-  width: 40px;
-  height: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* The column is only a scaffold — taps fall through it to the map. */
+  pointer-events: none;
+}
+.map-controls > * { pointer-events: auto; }
+.map-controls-bl { left: 10px; right: 60px; align-items: flex-start; }
+.map-controls-br { right: 10px; align-items: flex-end; }
+
+/* "Locate me" — bottom-RIGHT, under the thumb. 44px, the touch floor. */
+.map-locate {
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -614,6 +642,15 @@
   color: var(--accent);
   cursor: pointer;
   box-shadow: 0 1px 6px #0003;
+}
+
+/* Full screen is not a thumb control — it is a one-off, and it belongs with
+   the other top-right furniture (the account float, the close pill). */
+.map-expand {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 700;
 }
 .map-locate:hover:not(:disabled) { background: var(--surface-2); }
 /* Follow-mode is a visible state: filled accent while the map is FOLLOWING
@@ -628,23 +665,16 @@
 @media (prefers-reduced-motion: reduce) { .map-locate svg.locating { animation: none; } }
 
 /* ---- Place search, as a map control ------------------------------------
-   Top-LEFT, directly under Leaflet's zoom buttons (which end at ~74px: two
-   30px buttons plus a 2px border, 10px down). Every other edge is spoken
-   for on at least one surface — the account control and the two locate
-   buttons stack down the right, the tools/strips/live bar own the foot, and
-   the share screen's wordmark sits top centre — so this is the one position
-   that is free on all of them, which is what lets the control live in the
-   same place everywhere.
+   The lowest thing in the left thumb column — the owner's own placement, and
+   a sound one: it is the control most often reached for on an unfamiliar
+   map, so it gets the easiest corner to hit.
 
-   Same surface conventions as .map-locate: a flat panel, a soft rule, one
-   small shadow to lift it off the tiles, and the accent for the glyph. */
+   Same surface conventions as .map-locate, which is what makes the two
+   columns read as one set of controls: a flat panel, a soft rule, one small
+   shadow to lift it off the tiles, the accent for the glyph, 44px square. */
 .map-search-toggle {
-  position: absolute;
-  top: 82px;
-  left: 10px;
-  z-index: 700;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -663,32 +693,72 @@
 .map-search-open { background: var(--accent); border-color: var(--accent); color: #fff; }
 .map-search-open:hover { background: var(--accent); filter: brightness(1.1); }
 
-/* The field opens BELOW its own glyph, never over it: the way out stays
-   visible and in the same place. `right` stops it short of the right-hand
-   control column rather than covering it, and the height is capped to the
-   room actually left above the bottom stack — whose live height the map
-   publishes as --map-bottom-h, because the toolbar wraps to two rows at
-   320px and the strips come and go. The 120px floor is for the genuinely
-   squeezed case (a short phone with the toolbar, a strip AND the live bar
-   all up): a field you can still type in, sitting over the tools rather
-   than clipped away behind them, which is why it outranks them by one. */
+/* The field opens UPWARD out of its own glyph, never over it: the way out
+   stays visible and in the same place. It is anchored above the toggle
+   (44px + the column's 10px + an 8px gap), stops short of the right-hand
+   column, and is capped to the room actually left above the bottom stack —
+   whose live height the map publishes as --map-bottom-h, because the toolbar
+   wraps to two rows at 320px and the strips come and go. The 168px floor is
+   for the genuinely squeezed case (a short phone with a strip AND the live
+   bar up): a field you can still type in with one result visible under it,
+   sitting over the tools rather than clipped away behind them, which is why
+   it outranks them by one. */
 .map-search-panel {
   position: absolute;
-  top: 128px;
+  bottom: calc(var(--map-bottom-h, 0px) + 62px);
   left: 10px;
-  right: 58px;
+  right: 60px;
   z-index: 701;
   display: flex;
   flex-direction: column;
+  gap: 10px;
   max-width: 420px;
-  max-height: max(120px, calc(100% - 138px - var(--map-bottom-h, 0px)));
-  padding: 10px;
+  max-height: max(168px, calc(100% - 82px - var(--map-bottom-h, 0px)));
+  padding: 12px;
   border: 1px solid var(--rule-soft);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 2px 10px #0004;
+  box-shadow: 0 2px 14px #0004;
 }
-/* The row keeps its size; the results take what is left and scroll. */
+
+/* A titled panel, not a naked box: the label says what this is in the
+   system's own institutional register (uppercase, tracked), and the ✕ is a
+   second way out for a thumb already up here. */
+.map-search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.map-search-title {
+  font-family: var(--font-label);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+}
+.map-search-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: -4px -4px -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.map-search-close:hover { background: var(--surface-2); color: var(--text); }
+.map-search-close svg { width: 17px; height: 17px; }
+
+/* The field keeps its size; the results take what is left and scroll. */
 .map-search-panel .place-search { flex: 1 1 auto; min-height: 0; }
 .map-search-panel .place-search-row { flex-shrink: 0; }
 .map-search-panel .place-results {
@@ -698,22 +768,49 @@
   margin-bottom: 0;
 }
 
-/* Where the map just went. Takes the panel's place (the two never show at
-   once) and clears itself after a few seconds. */
-.map-search-note {
-  position: absolute;
-  top: 128px;
-  left: 10px;
-  z-index: 700;
+/* What a pick DOES, said where the answer is. The one thing a person could
+   reasonably assume wrongly, and the reason the search left the marker
+   strip in the first place. */
+.map-search-foot {
+  flex-shrink: 0;
   margin: 0;
-  max-width: 220px;
-  padding: 6px 10px;
-  font-size: 13px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+/* Where the map just went — a receipt riding directly on top of the control
+   that produced it, gone by the time the flag on the map is. */
+.map-search-note {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  max-width: 100%;
+  padding: 7px 11px;
   border: 1px solid var(--rule-soft);
+  border-left: 3px solid var(--accent);
   border-radius: 8px;
   background: var(--surface);
-  color: var(--text-dim);
   box-shadow: 0 1px 6px #0003;
+}
+.map-search-note-label {
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+}
+.map-search-note-place {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Accuracy of the current fix, shown before the sender commits to it. */
@@ -775,6 +872,42 @@
   filter: saturate(0.3) opacity(0.72);
 }
 
+/* YOU, ON YOUR OWN MAP, NOT BROADCASTING. A real, current fix that is
+   deliberately not leaving the device — so it is drawn, because a map that
+   has left you off it is hard to navigate by, but drawn as something the
+   room cannot see.
+
+   Two cues, and both are chosen to stay clear of .marker-gone above, which
+   means a DROPPED CONNECTION. That one is dashed and partly desaturated;
+   this one keeps its SOLID ring and goes fully grey, and adds the thing
+   neither of the other states has: a slash. Pattern first — a struck-through
+   symbol reads as "off air" before any colour is processed, survives colour
+   blindness, and cannot be confused with a ghost. Muddling "I have gone
+   quiet" with "they have dropped off" would be a lie in both directions. */
+.marker-muted {
+  position: relative;
+  filter: grayscale(1);
+  opacity: 0.8;
+}
+/* The slash overhangs the symbol, and both the avatar pin and the peer dot
+   clip their contents to keep a photo round. The photo is already round on
+   its own (.marker-avatar), so releasing the clip here costs nothing and is
+   what lets the slash actually cross the whole thing. */
+.marker-muted.pin-has-avatar,
+.peer-dot.marker-muted { overflow: visible; }
+.marker-muted::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 138%;
+  height: 3px;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  border-radius: 2px;
+  background: #0f172a;
+  box-shadow: 0 0 0 1.5px #ffffffd6;
+}
+
 /* Leaflet's own controls sit outside our system; tone them down so they do
    not compete with the pin. */
 .leaflet-control-attribution { font-size: 9px !important; opacity: 0.7; }
@@ -793,9 +926,11 @@
 }
 
 
-/* Drawing toolbar — bottom-left, clear of the zoom control (top-left) and the
-   locate button (top-right). Same surface conventions as .map-locate. Touch
-   targets at 44px: used outdoors, one-handed, possibly in the rain. */
+/* The edit tools — the left thumb column, directly above the place search.
+   Collapsed it is a single pencil; expanded it is the row that carries the
+   place-a-point tool, so this glyph is "edit the map" in both states. Same
+   surface conventions as .map-locate. Touch targets at 44px: used outdoors,
+   one-handed, possibly in the rain. */
 .map-tools {
   align-self: flex-start;
   display: flex;
@@ -893,24 +1028,106 @@
   border: none;
 }
 
-.map-stack-2 { top: 58px; }
-.map-stack-3 { top: 106px; }
-
-/* Transient failure note for the viewer-locate control. */
+/* Transient failure note for the viewer-locate control — directly above the
+   control it is about, in the right-hand column. */
 .map-viewer-note {
-  position: absolute;
-  right: 10px;
-  top: 106px;
-  z-index: 700;
   margin: 0;
-  max-width: 220px;
-  padding: 6px 10px;
+  max-width: min(240px, 62vw);
+  padding: 7px 11px;
   font-size: 13px;
+  line-height: 1.35;
+  text-align: right;
   border: 1px solid var(--rule-soft);
+  border-right: 3px solid var(--rule-soft);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text-dim);
   box-shadow: 0 1px 6px #0003;
+}
+
+/* ---- The ephemeral search flag -----------------------------------------
+   Where a picked search result is. Every other symbol on this map is a claim
+   made by a person — blue pin = the caller, amber pin = a report, slate dot
+   = someone in the room, slate diamond = a spot somebody marked — and a
+   searched place is none of those: nobody asserted anything, the map merely
+   went to look. So it is drawn as a VIEWFINDER rather than a marker: a
+   dashed ring round a small dot, translucent, over a dashed name chip.
+   Dashed already means "not a hard fact" everywhere on this map (zones,
+   trails, dropped-off dots), and this silhouette matches nothing else here.
+
+   Fixed colours, like every other thing that sits on tiles: it must read on
+   Atlas, Voyager and Dark Matter alike. It is never interactive, never in
+   markers[], and never on the wire. */
+.search-flag-icon { background: none; border: 0; }
+.search-flag { position: relative; display: block; width: 34px; height: 34px; }
+.search-flag-ring {
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  border: 2px dashed #0f172ad9;
+  background: #ffffff73;
+  box-shadow:
+    0 0 0 1.5px #ffffffb8,
+    0 1px 5px #0006;
+}
+.search-flag-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: #0f172a;
+  box-shadow: 0 0 0 2px #ffffffdb;
+}
+
+/* The arrival. The camera CUTS to a searched place rather than gliding —
+   event.latlng is unreliable mid-animation and a tap right after a pick is
+   likely, so animating the viewport would land markers at coordinates
+   nobody chose. This ring is how the arrival is made unmistakable instead:
+   it animates an ELEMENT, once, on landing, and cannot corrupt a
+   coordinate. Calm, not alarm — one 700ms expansion on the system's
+   standard easing, and nothing after it. */
+.search-flag::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid #0f172a;
+  animation: search-land 700ms cubic-bezier(0.2, 0, 0.2, 1) 1 both;
+}
+@keyframes search-land {
+  from { transform: scale(0.3); opacity: 0.85; }
+  to { transform: scale(2.2); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-flag::before { animation: none; opacity: 0; }
+}
+
+/* The place's name, dashed to match the ring — the same chip recipe as
+   .marker-name but explicitly NOT that solid-bordered thing, because this
+   is not a marker and must not be read as one. */
+.search-flag-name {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #fffffff0;
+  color: #14161a;
+  border: 1px dashed #0f172a80;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  font-style: italic;
+  line-height: 1.3;
+  box-shadow: 0 1px 4px #0005;
 }
 
 /* The viewer's own position: a neutral dot, deliberately not a pin. */
@@ -928,9 +1145,15 @@
 
 
 /* ---- Map bottom stack --------------------------------------------------
-   Everything that floats at the foot of the map — toolbar, notices, the
-   share sheet — stacks in one column so nothing has to know what else is
-   showing. The bottom padding keeps the OSM attribution line readable. */
+   The full-width things that float at the foot of the map — sheets, marker
+   strips, the live bar, the offline notice — stack in one column so nothing
+   has to know what else is showing. The bottom padding keeps the OSM
+   attribution line readable.
+
+   The map's OWN controls are deliberately not in here: they sit in the two
+   thumb columns above this stack (see .map-controls), anchored to the height
+   this stack publishes, so a sheet opening pushes them up rather than
+   burying them. */
 .map-bottom-stack {
   position: absolute;
   left: 0;
@@ -1208,12 +1431,85 @@ body.map-first .header { display: none; }
 .map-sheet > .accuracy-readout { flex-shrink: 0; }
 .sheet-panel .panel-hint { margin: -8px 0 0; }
 
-/* ---- Place search (report-somewhere-else flow) ------------------------- */
-.place-search { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+/* ---- Place search ------------------------------------------------------
+   The field and its answers, inside the map's search panel. Ruled, not
+   boxed: the results are a LIST of one thing, so they get hairline rules
+   between them rather than a stack of little cards, which is both calmer and
+   fits more answers into the squeezed panel a phone leaves. */
+.place-search { display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }
 .place-search-row { display: flex; gap: 8px; }
 .place-search-row .note-input { flex: 1; min-width: 0; }
 .place-search-row .button { flex: 0 0 auto; }
-.place-results { max-height: 32dvh; overflow-y: auto; }
+.place-search-input { padding: 11px 12px; font-size: 15px; }
+/* type=search grows a UA clear button in some browsers; it collides with our
+   own padding and reads as furniture nobody asked for. */
+.place-search-input::-webkit-search-decoration,
+.place-search-input::-webkit-search-cancel-button { display: none; }
+.place-search-go { padding: 11px 14px; white-space: nowrap; }
+
+.place-results {
+  display: flex;
+  flex-direction: column;
+  max-height: 32dvh;
+  overflow-y: auto;
+  /* A ruled list needs a top edge as much as it needs internal rules. */
+  border-top: 1px solid var(--rule-soft);
+}
+.place-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 48px;
+  padding: 9px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--rule-soft);
+  border-left: 3px solid transparent;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.place-result:hover,
+.place-result:focus-visible {
+  background: var(--surface-2);
+  border-left-color: var(--accent);
+}
+.place-result-name {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.place-result-where {
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-dim);
+  /* Nominatim's tail can be six administrative levels deep; two lines of it
+     is context, more is noise. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Empty, failed and offline all take the same shape — a quiet annotated
+   line, never an alarm — and differ only in the rule that flags them.
+   Errors are RED here, like everywhere else in this system; amber is
+   reserved for a reported location and means nothing else. */
+.place-search-msg {
+  margin: 0;
+  padding: 9px 11px;
+  border-left: 3px solid var(--rule-soft);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.place-search-msg-bad { border-left-color: var(--danger); color: var(--text); }
+.place-search-msg-offline { border-left-color: var(--offline); color: var(--text); }
 
 /* ---- Live rooms -------------------------------------------------------- */
 /* Another participant: a slate dot with their initial — never a pin. Same
@@ -1296,7 +1592,20 @@ body.map-first .header { display: none; }
   box-shadow: 0 1px 4px #0005;
 }
 
-.live-bar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+/* The live bar's controls. `flex-shrink: 0` on a five-button row is what
+   pushed "Back to code" off the right edge of a 390px phone and overflowed
+   the document by 73px at 320px (measured). The row WRAPS instead: on a
+   narrow phone the last control drops to a second line rather than off the
+   screen. Right-aligned so the wrapped line sits under the buttons it
+   belongs with, not adrift on the left. */
+.live-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .resume-chip { box-shadow: 0 4px 14px #0005; }
 
 /* "A spot is marked" row in the located sheet. */
@@ -1356,7 +1665,49 @@ body.map-first .header { display: none; }
   justify-content: flex-end;
   gap: 14px;
 }
-.marker-strip-remove { color: var(--danger); }
+
+/* Remove — the FAR LEFT of the row, as far from Done as the row is wide.
+   Outlined rather than filled: destructive, but cheap and undoable, so it
+   should read as available, never as the thing to press. It keeps the 44px
+   touch floor and the same square silhouette as the icon chip beside it, so
+   the row still reads as one set of controls rather than a button bolted on
+   the end. */
+.marker-strip-remove {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--danger);
+  cursor: pointer;
+}
+.marker-strip-remove svg { width: 21px; height: 21px; }
+.marker-strip-remove:hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+
+/* ---- Undo a removed spot ------------------------------------------------
+   A removed marker is cheap to put back and expensive to lose, so removal
+   is instant and reversible rather than guarded by a confirm. The toast is
+   the receipt AND the way back; it lives in the bottom stack like every
+   other floating thing, so it pushes the thumb controls up rather than
+   landing on them. */
+.undo-toast {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--danger);
+}
+.undo-toast-text { margin: 0; font-size: 14px; color: var(--text); }
+.undo-toast-action { flex-shrink: 0; min-height: 44px; padding: 10px 16px; }
 
 /* ---- Account: profile button, drawer, saved maps ----------------------
    The account is a convenience beside the share button, never in front of
@@ -1538,9 +1889,10 @@ body.map-first .header { display: none; }
   background: var(--surface);
   box-shadow: 0 1px 6px #0003;
 }
-.share-stage-account .map-locate { top: 62px; }
-.share-stage-account .map-stack-2 { top: 110px; }
-.share-stage-account .map-stack-3 { top: 158px; }
+/* The account float owns the top-right corner on these surfaces, so the one
+   remaining top-right control drops a slot. The locate and search controls
+   are at the FOOT of the map now and never come near it. */
+.share-stage-account .map-expand { top: 62px; }
 
 /* ---- Live v2: zones ----------------------------------------------------
    The circle itself is drawn by Leaflet (dashed slate); the chip is its
@@ -2143,18 +2495,34 @@ body.map-first .header { display: none; }
    only ever beside the pulsing dot that means the same thing everywhere
    else in this system. Off is quiet, not alarming: no red, no warning; not
    sharing is a legitimate way to run a session, not a fault. */
+/* ---- The sharing switch -------------------------------------------------
+   A real switch: a track and a knob you can see the state of across a car
+   park, with the word beside it for anyone who cannot. Square-cornered, not
+   a lozenge — this system's corners are 4px and nothing is pill-shaped, so
+   an iOS-style capsule would read as a consumer app rather than a tool.
+
+   Green on, plain surface off. Green means exactly one thing here — a live
+   session still updating — which is precisely what this controls. Off is
+   never red: choosing not to broadcast is a normal choice, not an error. */
 .share-switch {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
+  gap: 14px;
+  min-height: 52px;
   border-left: 4px solid var(--rule-soft);
 }
 /* A full row of the live bar. The specificity has to match
    `.map-sheet-code .button`, which pins every button in that bar to
    `flex: 0 1 auto` — without this the switch is squeezed in beside Save. */
 .live-bar .share-switch { flex: 0 0 100%; }
+.share-switch-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
 .share-switch-label { font-weight: var(--weight-medium, 500); }
 .share-switch-state {
   display: flex;
@@ -2171,6 +2539,45 @@ body.map-first .header { display: none; }
 /* The dot already carries its own right margin as an inline lead-in; in
    this pill it sits before a single word, so the gap wants to be tighter. */
 .share-switch-state .live-dot { margin-right: 6px; }
+
+.share-switch-track {
+  position: relative;
+  flex-shrink: 0;
+  width: 54px;
+  height: 32px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 5px;
+  background: var(--surface-2);
+  transition: background 140ms cubic-bezier(0.2, 0, 0.2, 1), border-color 140ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+.share-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px #0000002e;
+  transition: transform 140ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+.share-switch-on .share-switch-track { background: var(--live); border-color: var(--live); }
+.share-switch-on .share-switch-knob {
+  transform: translateX(22px);
+  border-color: #ffffff00;
+  background: #fff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .share-switch-track,
+  .share-switch-knob { transition: none; }
+}
+/* Focus lands on the button; the track is what the eye is on, so say so
+   there too rather than only outlining the whole row. */
+.share-switch:focus-visible .share-switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* On the code screen the same switch heads its own block, with the honest
    sentence about what the code points at underneath. */

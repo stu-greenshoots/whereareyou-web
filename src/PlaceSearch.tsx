@@ -34,13 +34,26 @@ export function PlaceSearch({
     label: string;
   }> | null>(null);
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  /**
+   * How the last attempt went wrong, if it did. Told apart on purpose: a
+   * search that could not leave the device is a different fact from one the
+   * server refused, and only one of them is worth waiting for signal over.
+   */
+  const [failed, setFailed] = useState<'none' | 'network' | 'offline'>('none');
 
   const run = async () => {
     const q = query.trim();
     if (q === '' || busy) return;
+    // A device that knows it is offline should say so rather than spending
+    // several seconds failing at it. Only trusted in the negative —
+    // navigator.onLine says nothing useful when it is true.
+    if (navigator.onLine === false) {
+      setFailed('offline');
+      setResults(null);
+      return;
+    }
     setBusy(true);
-    setFailed(false);
+    setFailed('none');
     try {
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(q)}`,
@@ -71,7 +84,7 @@ export function PlaceSearch({
         }),
       );
     } catch {
-      setFailed(true);
+      setFailed('network');
       setResults(null);
     }
     setBusy(false);
@@ -87,36 +100,60 @@ export function PlaceSearch({
         }}
       >
         <input
-          className="note-input"
+          className="note-input place-search-input"
           type="search"
           aria-label="Search for a place"
-          placeholder="Search for a place"
+          placeholder="Street, town or postcode"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            // Editing the query retires the last answer: a stale "nothing
+            // found" sitting under a half-typed new one is a lie about what
+            // was asked.
+            if (failed !== 'none') setFailed('none');
+          }}
         />
-        <button type="submit" className="button button-primary" disabled={busy || query.trim() === ''}>
+        <button
+          type="submit"
+          className="button button-primary place-search-go"
+          disabled={busy || query.trim() === ''}
+        >
           {busy ? 'Searching…' : 'Search'}
         </button>
       </form>
 
-      {failed && <p className="panel-hint">{failText}</p>}
-      {results !== null && results.length === 0 && <p className="panel-hint">{emptyText}</p>}
+      {/* Every failure carries its own way forward — the map is still there
+          to be panned and zoomed by hand, whatever the search did. */}
+      {failed === 'network' && <p className="place-search-msg place-search-msg-bad">{failText}</p>}
+      {failed === 'offline' && (
+        <p className="place-search-msg place-search-msg-offline">
+          No signal, so this cannot look anywhere up. You can still pan and zoom the map yourself.
+        </p>
+      )}
+      {results !== null && results.length === 0 && (
+        <p className="place-search-msg">{emptyText}</p>
+      )}
       {results !== null && results.length > 0 && (
-        <div className="history-list place-results">
-          {results.map((place) => (
-            <button
-              key={`${place.lat},${place.lon}`}
-              type="button"
-              className="history-row"
-              onClick={() => {
-                setResults(null);
-                onPick(place.lat, place.lon, place.accuracyM, place.label);
-              }}
-            >
-              <strong>{place.label.split(',')[0]}</strong>
-              <span>{place.label.split(',').slice(1).join(',').trim()}</span>
-            </button>
-          ))}
+        <div className="place-results" role="list">
+          {results.map((place) => {
+            const head = place.label.split(',')[0] ?? place.label;
+            const rest = place.label.split(',').slice(1).join(',').trim();
+            return (
+              <button
+                key={`${place.lat},${place.lon}`}
+                type="button"
+                role="listitem"
+                className="place-result"
+                onClick={() => {
+                  setResults(null);
+                  onPick(place.lat, place.lon, place.accuracyM, place.label);
+                }}
+              >
+                <span className="place-result-name">{head}</span>
+                {rest !== '' && <span className="place-result-where">{rest}</span>}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
