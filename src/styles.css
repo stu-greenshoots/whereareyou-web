@@ -1092,7 +1092,7 @@
   background: #ffffff73;
   box-shadow:
     0 0 0 1.5px #ffffffb8,
-    0 1px 5px #0006;
+    var(--shadow-chip);
 }
 .search-flag-dot {
   position: absolute;
