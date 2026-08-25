@@ -125,7 +125,7 @@
 .nav-item { background: none; border: 0; padding: 0; cursor: pointer; }
 
 .nav-item:hover { color: var(--text); }
-.nav-active { color: var(--text); border-bottom: 2px solid var(--accent); padding-bottom: 2px; }
+.nav-active { color: var(--text); border-bottom: var(--border-rule) solid var(--accent); padding-bottom: 2px; }
 
 .main { flex: 1; padding: 20px; }
 .theme-console .main { padding: 16px 20px; }
@@ -567,7 +567,7 @@
   margin: 13px 0 0;
   padding: 12px 14px;
   background: var(--surface-2);
-  border-left: 3px solid var(--rule-soft);
+  border-left: var(--border-flag) solid var(--rule-soft);
   font-size: var(--text-base);
 }
 
@@ -838,7 +838,7 @@
   max-width: 100%;
   padding: 7px 11px;
   border: var(--border-hair) solid var(--rule-soft);
-  border-left: 3px solid var(--accent);
+  border-left: var(--border-flag) solid var(--accent);
   border-radius: var(--radius-control);
   background: var(--surface);
   box-shadow: var(--shadow-float);
@@ -1062,7 +1062,7 @@
   line-height: 1.35;
   text-align: right;
   border: var(--border-hair) solid var(--rule-soft);
-  border-right: 3px solid var(--rule-soft);
+  border-right: var(--border-flag) solid var(--rule-soft);
   border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-dim);
@@ -1334,8 +1334,8 @@ body.map-first .footer { display: none; }
   flex-shrink: 0;
   width: 8px;
   height: 8px;
-  border-right: 2px solid var(--text-dim);
-  border-bottom: 2px solid var(--text-dim);
+  border-right: var(--border-rule) solid var(--text-dim);
+  border-bottom: var(--border-rule) solid var(--text-dim);
   transform: rotate(45deg);
   transition: transform 0.15s;
 }
@@ -1473,7 +1473,7 @@ body.map-first .header { display: none; }
   padding: var(--space-4);
   border: 0;
   border-bottom: var(--border-hair) solid var(--rule-soft);
-  border-left: 3px solid transparent;
+  border-left: var(--border-flag) solid transparent;
   background: none;
   color: var(--text);
   font-family: var(--font-ui);
@@ -1510,7 +1510,7 @@ body.map-first .header { display: none; }
 .place-search-msg {
   margin: 0;
   padding: 9px 11px;
-  border-left: 3px solid var(--rule-soft);
+  border-left: var(--border-flag) solid var(--rule-soft);
   border-radius: var(--radius);
   background: var(--surface-2);
   font-size: var(--text-sm);
@@ -1902,7 +1902,7 @@ body.map-first .header { display: none; }
   border-radius: var(--radius);
   background: #ffffffeb;
   color: #14161a;
-  border: 1.5px dashed #475569;
+  border: var(--border-hair) dashed #475569;
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   font-weight: 650;
@@ -2017,7 +2017,7 @@ body.map-first .header { display: none; }
   border-radius: var(--radius) var(--radius) var(--radius) 1px;
   background: #ffffff;
   color: #334155;
-  border: 1.5px solid #0f172a66;
+  border: var(--border-hair) solid #0f172a66;
   box-shadow: var(--shadow-chip);
   cursor: pointer;
   animation: chat-flag 4s ease forwards;
