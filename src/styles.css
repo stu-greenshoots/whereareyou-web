@@ -636,19 +636,27 @@
 .map-controls-br { right: var(--map-edge); align-items: flex-end; }
 
 /* ---- The square icon control ——————————————————————————————————————————
-   ONE recipe, six call sites: locate me, the place search, an edit tool, a
-   sheet icon, the marker strip's remove, and the live bar's chat/compass
-   buttons. They appear beside each other constantly — the search glyph sits
-   directly under the edit tools in the left thumb column, the strip's remove
-   sits in one row with its icon chip — so any difference between them reads
-   as a mistake rather than a distinction.
+   ONE recipe, seven call sites: locate me, the place search, an edit tool,
+   the ink swatch, a sheet icon, the marker strip's remove, and the live bar's
+   chat/compass buttons. They appear beside each other constantly — the search
+   glyph sits directly under the edit tools in the left thumb column, the
+   strip's remove sits in one row with its icon chip — so any difference
+   between them reads as a mistake rather than a distinction.
 
    They had drifted to two radii (9px and 10px), two icon sizes (21px and
    22px) and two border treatments. Everything shared is stated once, here.
-   A call site may vary only its COLOUR and whether it carries a shadow. */
+   A call site may vary only its COLOUR and whether it carries a shadow.
+
+   NOTHING may add a wrapper with padding or a border of its own around one of
+   these. That is exactly how the edit tools grew to 54px while the search
+   button beside them stayed 44px: the toolbar was a panel, and the panel's
+   4px padding plus its 1px rule became ten visible pixels of drift between
+   two controls sitting one above the other. A group of these is a row of
+   them, gapped — never a box around them. */
 .map-locate,
 .map-search-toggle,
 .map-tool,
+.map-ink-wrap > .map-ink,
 .sheet-icon,
 .marker-strip-remove,
 .live-chat-button {
@@ -704,15 +712,14 @@
 }
 
 /* Riding directly on the tiles: these need the lift, or they dissolve into a
-   photograph. The ones inside a sheet inherit the sheet's own. */
+   photograph. The ones inside a sheet inherit the sheet's own. Every control
+   in the two thumb columns is on this list — an edit tool is not a segment of
+   some larger surface, it is one more control on the tiles, and it carries
+   the same lift as the search button below it. */
 .map-locate,
-.map-search-toggle { box-shadow: var(--shadow-float); }
-
-/* A TOOL is a segment, not a standalone control: `.map-tools` is the surface
-   it sits on, so it brings no rule and no fill of its own. The transparent
-   border is kept rather than dropped so the geometry stays identical to its
-   standalone siblings. */
-.map-tool { border-color: transparent; background: none; }
+.map-search-toggle,
+.map-tool,
+.map-ink-wrap > .map-ink { box-shadow: var(--shadow-float); }
 
 /* One rest-hover, and one active state — filled accent. Used for follow-mode,
    an open search panel, an armed tool and an open sheet panel alike, so
@@ -738,11 +745,17 @@
 .sheet-icon-active:hover:not(:disabled),
 .notify-on:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
 
+/* Unavailable is said on the GLYPH, not on the box. Fading the whole button
+   used to do two wrong things at once: it went translucent over the tiles, so
+   a disabled control read as a different SHAPE from the one beside it, and it
+   did so at two different strengths (0.7 for locate, 0.35 for a tool). The
+   box stays exactly the box; only the mark inside it goes quiet. */
 .map-locate:disabled,
 .map-tool:disabled,
 .sheet-icon:disabled { cursor: default; }
-.map-locate:disabled { opacity: 0.7; }
-.map-tool:disabled { opacity: 0.35; }
+.map-locate:disabled svg,
+.map-tool:disabled svg,
+.sheet-icon:disabled svg { opacity: 0.4; }
 
 /* Full screen is not a thumb control — it is a one-off, and it belongs with
    the other top-right furniture (the account float, the close pill). */
@@ -968,32 +981,43 @@
 
 /* The edit tools — the left thumb column, directly above the place search.
    Collapsed it is a single pencil; expanded it is the row that carries the
-   place-a-point tool, so this glyph is "edit the map" in both states. Same
-   surface conventions as .map-locate. Touch targets at 44px: used outdoors,
-   one-handed, possibly in the rain. */
+   place-a-point tool, so this glyph is "edit the map" in both states.
+
+   THIS IS A LAYOUT, NOT A SURFACE. It was a panel once — 4px of padding and a
+   hairline rule around whatever it held — and the cost was that the collapsed
+   pencil rendered as a 54px box directly above a 44px search button, with the
+   pencil glyph pushed 5px right of the magnifier below it. Two controls, one
+   above the other, one thumb apart, visibly different sizes.
+
+   So the group brings nothing of its own: no padding, no rule, no fill, no
+   shadow. Each tool is a floating control in its own right, identical to the
+   search button and the locate button, and the group only says where they go
+   and how far apart — the same --map-gap that separates every other pair of
+   floating things. Expanded, it is a row of identical 44px buttons that wraps;
+   it never becomes one bigger box. */
 .map-tools {
   align-self: flex-start;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--map-gap);
   max-width: 100%;
-  padding: var(--space-2);
-  border: var(--border-hair) solid var(--rule-soft);
-  border-radius: var(--radius-panel);
-  background: var(--surface);
-  box-shadow: var(--shadow-float);
 }
 
-/* Ink swatches. The swatch is smaller than the finger target on purpose. */
+/* The ink swatch is a control like the rest of the row — same box, same rule,
+   same corners, same lift (see the square-icon-control recipe above) — with
+   the current colour as its glyph. Inside the palette popover it drops the
+   surface and is a bare swatch on the panel's own, but keeps the 44px box:
+   this is a colour being picked outdoors with cold hands. */
 .map-ink {
   position: relative;
-  width: 36px;
+  width: var(--control);
   height: var(--control);
   padding: 0;
   border: none;
   background: none;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .map-ink::after {
   content: '';
@@ -1009,13 +1033,6 @@
   box-shadow: 0 0 0 1px var(--rule-soft);
 }
 .map-ink-active::after { box-shadow: 0 0 0 2px var(--accent); }
-
-.map-tools-rule {
-  width: 1px;
-  height: 28px;
-  margin: 0 2px;
-  background: var(--rule-soft);
-}
 
 /* "Sketch is full" — sits just above the toolbar, same surface. */
 .map-tools-note {
@@ -1192,17 +1209,30 @@
   pointer-events: none;
 }
 .map-bottom-stack > * { pointer-events: auto; }
+/* Empty, it must publish a height of ZERO. Its padding is there to clear the
+   OSM attribution under a sheet; with no sheet there is nothing to clear, and
+   the 22px was quietly being added to --map-bottom-h on every surface that has
+   no bottom furniture — the console's resolved map among them, where the
+   locate control sat 32px off the bottom edge while the full-screen control
+   above it sat at the documented 10. One inset, everywhere. */
+.map-bottom-stack:empty { padding-bottom: 0; }
 .map-frame-locked .map-bottom-stack,
 .map-frame-full .map-bottom-stack {
   padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
+.map-frame-locked .map-bottom-stack:empty,
+.map-frame-full .map-bottom-stack:empty {
+  padding-bottom: 0;
+}
 
 /* Ink popover — the palette opens UPWARD from the single swatch so the
    toolbar stays one row. */
-.map-ink-wrap { position: relative; display: flex; }
+.map-ink-wrap { position: relative; display: flex; flex-shrink: 0; }
 .map-ink-pop {
   position: absolute;
-  bottom: 46px;
+  /* Clears its own button by the same gap that separates any two floating
+     things, rather than a hand-picked 46. */
+  bottom: calc(var(--control) + var(--map-gap));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -1770,8 +1800,10 @@ body.map-first .header { display: none; }
 
 .drawer-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .drawer-face {
-  width: 44px;
-  height: 44px;
+  /* The same face as .profile-button wears on the map, at the same size —
+     said with the token, not with the number it happens to resolve to. */
+  width: var(--control);
+  height: var(--control);
   border-radius: 50%;
   object-fit: cover;
   border: var(--border-rule) solid var(--rule-soft);

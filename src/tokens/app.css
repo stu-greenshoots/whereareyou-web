@@ -36,6 +36,32 @@
   --icon-marker: 12px; /* the glyph inside a placed diamond, drawn on the tiles */
   --icon-mini: 13px; /* a map motif miniaturised into an off-screen edge pill */
 
+  /* ---- The live area — the size a glyph LOOKS -------------------------- */
+  /* Sizing the svg is only half of it, and the half that was got right. Two
+     glyphs can both be 22px boxes and still be visibly different sizes,
+     because what the eye measures is the INK, not the box. The locate
+     crosshair was drawn from edge to edge of its 24-unit grid — ticks at 1 and
+     23 — while the magnifier one thumb away spanned 17 of the same 24. Same
+     token, same button, a third more ink, and that is the difference the app
+     was reported for.
+
+     So every chrome glyph is drawn inside a LIVE AREA, with air on all four
+     sides. Measured across the whole set (union of the children's geometry
+     boxes, stroke excluded, in the svg's own units) it currently runs:
+
+       13.0  place-a-point pin     16.0  pen, chat, close
+       13.2  notify bell (narrow)  16.5  undo
+       13.5  arrow                 17.0  search, options
+       14.0  clear/bin             17.2  compass
+       15.0  zone circle           17.6  locate
+
+     That spread is shape, not drift — a bell is narrower than a compass rose
+     at the same optical size. What is NOT allowed is leaving the area: an ink
+     span past ~19 reads as a bigger control (the old locate, at 22), under ~12
+     as a smaller one (the old ✕, at 12). Measure a new glyph before shipping
+     it, and if it is outside 13–19, redraw it — do not resize the svg, which
+     would break the one thing that is genuinely uniform. */
+
   /* ---- Icon stroke — two weights, one per drawing grid ------------------ */
   /* Chrome glyphs are drawn on a 24-unit grid; the marker glyphs on a 12-unit
      one. A stroke in the 12-unit grid renders twice as heavy at the same size,

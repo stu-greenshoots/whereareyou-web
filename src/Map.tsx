@@ -2137,9 +2137,11 @@ export function Map({
                       <PointIcon />
                     </button>
                   )}
-                  <span className="map-tools-rule" aria-hidden="true" />
                   {/* One swatch; the palette pops UPWARD so the toolbar stays
-                      one row and the map keeps the screen. */}
+                      one row and the map keeps the screen. The swatch is a
+                      control in the row like any other — no rule beside it,
+                      because a hairline separator needs a panel to sit on and
+                      this row is buttons on tiles, not a panel. */}
                   <span className="map-ink-wrap">
                     <button
                       type="button"
@@ -2168,7 +2170,6 @@ export function Map({
                       </span>
                     )}
                   </span>
-                  <span className="map-tools-rule" aria-hidden="true" />
                   <button
                     type="button"
                     className="map-tool"
@@ -2299,16 +2300,22 @@ export function Map({
 
 /** The locate crosshair, shared by both locate controls — they are the same
     gesture ("put me on this map") aimed at different subjects, and drawing
-    them twice is how the two drifted apart before. */
+    them twice is how the two drifted apart before.
+
+    It used to be drawn edge to edge of its 24-unit box — ticks from 1 to 23 —
+    while every glyph beside it sits inside the ~18-unit live area (see "the
+    live area" in tokens/app.css). Same 22px svg, same 44px button, a third
+    more ink: which is why the locate control read as a size of its own next
+    to the magnifier one thumb away. Redrawn to the live area. */
 function LocateIcon({ busy }: { busy: boolean }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={busy ? 'locating' : ''}>
-      <circle cx="12" cy="12" r="4" fill="currentColor" />
-      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.8" />
-      <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.8" />
-      <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.8" />
-      <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="12" cy="12" r="3.2" fill="currentColor" />
+      <circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="12" y1="3.2" x2="12" y2="5.9" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="12" y1="18.1" x2="12" y2="20.8" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="3.2" y1="12" x2="5.9" y2="12" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="18.1" y1="12" x2="20.8" y2="12" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   );
 }
@@ -2398,9 +2405,12 @@ function PointIcon() {
     ways in the first place. */
 export function CloseIcon() {
   return (
+    // 5–19 rather than 6–18: at 12 of 24 units this was the smallest mark in
+    // the app, and it sits in the edit-tool row directly beside the pen, which
+    // draws at 16. Brought up into the live area with the rest of them.
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="19" y1="5" x2="5" y2="19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
