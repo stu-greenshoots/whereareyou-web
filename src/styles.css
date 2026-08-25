@@ -1846,7 +1846,7 @@ body.map-first .header { display: none; }
   gap: 8px;
   border: var(--border-hair) solid var(--rule-soft);
   border-left: var(--border-flag) solid var(--accent);
-  border-radius: var(--radius, 4px);
+  border-radius: var(--radius);
   background: var(--surface);
   padding: 12px 14px;
 }
