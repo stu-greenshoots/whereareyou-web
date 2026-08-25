@@ -1612,18 +1612,14 @@ body.map-first .header { display: none; }
 }
 .resume-chip { box-shadow: var(--shadow-sheet); }
 
-/* "A spot is marked" row in the located sheet. */
+/* "A spot is marked" row in the located sheet. Text only: removing a spot is
+   the bin in the marker strip, and nothing else — this row used to carry a
+   second, differently-dressed way to do the same thing. */
 .marker-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-5);
   margin: 0;
   font-size: var(--text-sm);
   color: var(--text-dim);
 }
-
-.marker-row-actions { display: flex; align-items: center; flex-shrink: 0; }
 
 /* A quiet way OUT to the phone's own maps app — an annotation on the
    location, never a rival to the primary actions. */

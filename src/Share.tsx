@@ -1836,16 +1836,17 @@ function LocatedSheet({
         </div>
       )}
 
+      {/* Removing a spot is the BIN IN THE MARKER STRIP, and only that. It
+          used to be a "Remove it" text link here as well, which meant the one
+          action wore two completely different clothes a tap apart: a word on
+          this sheet, an icon the moment you opened the strip. The live room
+          only ever had the bin, so this is also what makes the two surfaces
+          agree. The sentence now says where the control is. */}
       {marker !== null && (
         <p className="marker-row">
           {thirdParty
-            ? 'Your code will point to this spot. Tap the map to move it; tap the diamond to name it.'
-            : 'A spot is marked. Tap the map to move it; tap the diamond to name it.'}
-          <span className="marker-row-actions">
-            <button className="link-button" onClick={onRemoveMarker}>
-              Remove it
-            </button>
-          </span>
+            ? 'Your code will point to this spot. Tap the map to move it; tap the diamond to name or remove it.'
+            : 'A spot is marked. Tap the map to move it; tap the diamond to name or remove it.'}
         </p>
       )}
 
