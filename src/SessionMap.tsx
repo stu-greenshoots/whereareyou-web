@@ -36,6 +36,7 @@ import { useSharedConnectivity } from './connectivity.js';
 import {
   Map,
   centreOnPlacement,
+  CloseIcon,
   disarmPointTool,
   escapeHtml,
   isSafeAvatar,
@@ -1932,11 +1933,11 @@ export function SessionMap({
             </button>
             <button
               type="button"
-              className="live-tab live-tab-close"
+              className="live-tab live-tab-close icon-close"
               aria-label="Close the panel"
               onClick={() => setPanel('none')}
             >
-              ✕
+              <CloseIcon />
             </button>
           </div>
 
@@ -2039,11 +2040,11 @@ export function SessionMap({
                 </div>
                 <button
                   type="button"
-                  className="live-tab live-tab-close"
+                  className="live-tab live-tab-close icon-close"
                   aria-label="Close"
                   onClick={() => setCard(null)}
                 >
-                  ✕
+                  <CloseIcon />
                 </button>
               </div>
               <div className="live-card-facts">
@@ -2405,7 +2406,7 @@ function ChatIcon() {
 function CompassIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
       <path d="M15.4 8.6 13.2 13.2 8.6 15.4l2.2-4.6Z" fill="currentColor" />
     </svg>
   );

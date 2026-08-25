@@ -1990,12 +1990,12 @@ function LocatedSheet({
 function GearIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" strokeWidth="1.8" />
       <path
         d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L14.9 3.4h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4Z"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.5"
+        strokeWidth="1.8"
         strokeLinejoin="round"
       />
     </svg>
@@ -2021,11 +2021,11 @@ function ExpandIcon() {
 function SignalOffIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <line x1="4.5" y1="19" x2="4.5" y2="15.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="9.5" y1="19" x2="9.5" y2="12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="14.5" y1="19" x2="14.5" y2="8.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="19.5" y1="19" x2="19.5" y2="5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <line x1="3" y1="4" x2="21" y2="21" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <line x1="4.5" y1="19" x2="4.5" y2="15.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="9.5" y1="19" x2="9.5" y2="12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="14.5" y1="19" x2="14.5" y2="8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="19.5" y1="19" x2="19.5" y2="5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="3" y1="4" x2="21" y2="21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }

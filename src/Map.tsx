@@ -353,26 +353,26 @@ export interface PlacedMarker {
 export const MARKER_GLYPHS: Record<MarkerIcon, string> = {
   spot: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="3" fill="currentColor"/></svg>',
   warning:
-    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.2 11 10.5H1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><line x1="6" y1="4.6" x2="6" y2="7.2" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="8.9" r="0.9" fill="currentColor"/></svg>',
-  flag: '<svg viewBox="0 0 12 12" aria-hidden="true"><line x1="3" y1="1.5" x2="3" y2="10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M3 2h6L7.2 4 9 6H3Z" fill="currentColor"/></svg>',
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.2 11 10.5H1Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><line x1="6" y1="4.6" x2="6" y2="7.2" stroke="currentColor" stroke-width="1.2"/><circle cx="6" cy="8.9" r="0.9" fill="currentColor"/></svg>',
+  flag: '<svg viewBox="0 0 12 12" aria-hidden="true"><line x1="3" y1="1.5" x2="3" y2="10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M3 2h6L7.2 4 9 6H3Z" fill="currentColor"/></svg>',
   cross:
     '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.8 1.5h2.4v3.3h3.3v2.4H7.2v3.3H4.8V7.2H1.5V4.8h3.3Z" fill="currentColor"/></svg>',
   car: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 7l1.2-3h5.6L10 7v2.3H2Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="4" cy="9.6" r="1" fill="currentColor"/><circle cx="8" cy="9.6" r="1" fill="currentColor"/></svg>',
   house:
-    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6l4-4 4 4v4.5H2Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6l4-4 4 4v4.5H2Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
   // The live-v2 additions — outdoors and rendezvous vocabulary. Same rules
   // as the first six: geometric strokes, legible at 12px on a phone outdoors.
-  tent: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 10.5 6 2l4.5 8.5Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6 5.5v5" stroke="currentColor" stroke-width="1.2"/></svg>',
+  tent: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 10.5 6 2l4.5 8.5Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M6 5.5v5" stroke="currentColor" stroke-width="1.2"/></svg>',
   water:
-    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5C7.8 4 9.5 6 9.5 8a3.5 3.5 0 0 1-7 0c0-2 1.7-4 3.5-6.5Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5C7.8 4 9.5 6 9.5 8a3.5 3.5 0 0 1-7 0c0-2 1.7-4 3.5-6.5Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
   danger:
-    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 1 3 6.5h2.5L4.5 11 9 5.5H6.5Z" fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 1 3 6.5h2.5L4.5 11 9 5.5H6.5Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
   meet: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="4" cy="4" r="1.8" fill="currentColor"/><circle cx="8.6" cy="4.6" r="1.5" fill="currentColor"/><path d="M1.5 10.5c0-1.8 1.1-3 2.7-3s2.6 1.2 2.6 3Z" fill="currentColor"/><path d="M7.2 10.5c.1-1.5 1-2.5 2.2-2.5 1 0 1.8.9 1.9 2.5Z" fill="currentColor"/></svg>',
   dog: '<svg viewBox="0 0 12 12" aria-hidden="true"><ellipse cx="6" cy="8.4" rx="2.4" ry="1.9" fill="currentColor"/><circle cx="2.6" cy="5.4" r="1.1" fill="currentColor"/><circle cx="4.9" cy="3.4" r="1.1" fill="currentColor"/><circle cx="7.4" cy="3.4" r="1.1" fill="currentColor"/><circle cx="9.6" cy="5.4" r="1.1" fill="currentColor"/></svg>',
   camera:
-    '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="3.5" width="9" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.2 3.5 5 2h2l.8 1.5" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><circle cx="6" cy="6.7" r="1.7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
-  boat: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 7.5h9L9 10.2H3Z" fill="currentColor"/><path d="M6.2 1.5v6M6.2 2.2 9.4 6.5H6.2" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>',
-  tree: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 3.2 4.8h1.2L2.5 7.8h2.6v2.7h1.8V7.8h2.6L7.6 4.8h1.2Z" fill="currentColor" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="3.5" width="9" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.2 3.5 5 2h2l.8 1.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="6" cy="6.7" r="1.7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
+  boat: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 7.5h9L9 10.2H3Z" fill="currentColor"/><path d="M6.2 1.5v6M6.2 2.2 9.4 6.5H6.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+  tree: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 3.2 4.8h1.2L2.5 7.8h2.6v2.7h1.8V7.8h2.6L7.6 4.8h1.2Z" fill="currentColor"/></svg>',
 };
 
 /** The icon chooser — shared by the share sheet and the live room. */
@@ -428,7 +428,7 @@ function placedIcon(
 /** The label chip at a zone's centre — name plus, when removable, a ×. */
 function zoneChipIcon(name: string, removable: boolean): L.DivIcon {
   const x = removable
-    ? '<button type="button" class="zone-x" aria-label="Remove this zone">&#215;</button>'
+    ? '<button type="button" class="zone-x" aria-label="Remove this zone">&#10005;</button>'
     : '';
   return L.divIcon({
     className: 'zone-chip-icon',
@@ -2232,7 +2232,7 @@ export function Map({
             <span className="map-search-title">Search for a place</span>
             <button
               type="button"
-              className="map-search-close"
+              className="map-search-close icon-close"
               aria-label="Close the search"
               onClick={() => setSearchOpen(false)}
             >
@@ -2304,11 +2304,11 @@ function LocateIcon({ busy }: { busy: boolean }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={busy ? 'locating' : ''}>
       <circle cx="12" cy="12" r="4" fill="currentColor" />
-      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.6" />
-      <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.6" />
-      <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.6" />
-      <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="12" y1="1" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="12" y1="19.5" x2="12" y2="23" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="1" y1="12" x2="4.5" y2="12" stroke="currentColor" strokeWidth="1.8" />
+      <line x1="19.5" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   );
 }
@@ -2393,7 +2393,10 @@ function PointIcon() {
   );
 }
 
-function CloseIcon() {
+/** The one close/dismiss glyph in the app. Exported because a second copy of
+    it somewhere else is exactly how "close" ended up being said six different
+    ways in the first place. */
+export function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -2407,9 +2410,9 @@ function CloseIcon() {
 export function ClearIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <line x1="10.5" y1="10.5" x2="10.5" y2="16.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <line x1="13.5" y1="10.5" x2="13.5" y2="16.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="10.5" y1="10.5" x2="10.5" y2="16.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <line x1="13.5" y1="10.5" x2="13.5" y2="16.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }

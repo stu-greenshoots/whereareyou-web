@@ -126,14 +126,14 @@ function BellIcon() {
         d="M12 3.2c-3 0-5 2.2-5 5.2v3.4l-1.6 3.4h13.2L17 11.8V8.4c0-3-2-5.2-5-5.2Z"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.7"
+        strokeWidth="1.8"
         strokeLinejoin="round"
       />
       <path
         d="M10 17.9a2 2 0 0 0 4 0"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.7"
+        strokeWidth="1.8"
         strokeLinecap="round"
       />
     </svg>
