@@ -7,3 +7,7 @@ dist/
 
 # JetBrains IDE
 .idea/
+
+# Local before/after screenshots from a visual check. Verification output,
+# not source — regenerate rather than commit.
+.visual-check/

@@ -1,0 +1,96 @@
+/* ============================================================================
+   whereareyou — app-level tokens
+
+   The other files in this folder are a byte-for-byte mirror of the design
+   system, and they describe the ISSUED DOCUMENT: the code, the panels, the
+   buttons, the two surfaces. They are deliberately silent on two things this
+   app has since grown, and this file is where those are pinned down so they
+   cannot drift again.
+
+     1. AN ICON VOCABULARY. The system ships no icon set and says so — "if a
+        future need for icons arises, match the system's restraint: monochrome,
+        currentColor, hairline or simple-fill, sized to the 44px touch floor —
+        and document it here first". This app now carries around thirty glyphs
+        across map controls, sheet bars, marker diamonds and edge pills, and
+        they had reached TEN different rendered sizes and SIX stroke weights.
+        Below is the whole vocabulary: four sizes, two weights.
+
+     2. MAP FURNITURE. Controls, sheets, notes and chips that float on top of
+        the tiles. The document's flat, ruled language does not survive on a
+        photographic background — a 1px hairline vanishes into a street — so
+        these get the one shadow the system already grants the map pin, and
+        nothing else about them changes: same 4px corners, same rules, same
+        semantic colours.
+
+   Nothing here invents a value. Each token is either the number that already
+   dominated the codebase, or the design system's own number where the code had
+   drifted off it. Fold this file back into the design system at the next sync.
+   ========================================================================= */
+
+:root {
+  /* ---- Icon sizes — one per ROLE, and only these four ------------------- */
+  /* Two glyphs in the same role must never differ. If a new glyph does not
+     fit one of these roles, the role is wrong, not the size. */
+  --icon: 22px; /* the glyph that IS the control: any 44px square button */
+  --icon-inline: 18px; /* a glyph beside words in a pill, or in a dense control */
+  --icon-marker: 12px; /* the glyph inside a placed diamond, drawn on the tiles */
+  --icon-mini: 13px; /* a map motif miniaturised into an off-screen edge pill */
+
+  /* ---- Icon stroke — two weights, one per drawing grid ------------------ */
+  /* Chrome glyphs are drawn on a 24-unit grid; the marker glyphs on a 12-unit
+     one. A stroke in the 12-unit grid renders twice as heavy at the same size,
+     which is why the marker glyphs used to look bolder than the bin beside
+     them. Each grid gets one weight, and a marker glyph shown AS A CONTROL is
+     re-struck at half weight — see `.sheet-icon svg[viewBox='0 0 12 12']`. */
+  --stroke-icon: 1.8; /* 24-unit grid — every chrome glyph */
+  --stroke-marker: 1.2; /* 12-unit grid — every marker glyph, in its diamond */
+
+  /* ---- Controls -------------------------------------------------------- */
+  --control: 44px; /* the square icon control; also the system's touch floor */
+  /* A close inside a panel header, where 44px of visible box would swamp the
+     header. The BOX is smaller; the touch area is still extended to 44px with
+     a ::after, never shrunk. */
+  --control-dense: 32px;
+
+  /* ---- Radius: two aliases, not two values ----------------------------- */
+  /* Both resolve to the system's --radius (4px). They carry separate names so
+     the map's floating furniture can be retuned in one edit later — not so
+     they can drift apart again. Nothing else in this app declares a radius:
+     if a rule needs a corner, it uses one of these, --radius or --radius-sm. */
+  --radius-control: var(--radius); /* buttons, square icon controls, chips, rows */
+  --radius-panel: var(--radius); /* sheets, popovers, floating panels */
+
+  /* ---- Elevation over the tiles ---------------------------------------- */
+  /* The document is flat because documents are flat. A map is not: a surface
+     riding on tiles needs the lift the system already grants the pin, or it
+     dissolves into a photograph. Four levels, by how far off the map the thing
+     sits — and nothing else. */
+  --shadow-float: 0 1px 6px #0003; /* a control or small note, on the tiles */
+  --shadow-panel: 0 2px 12px #0004; /* a panel or popover opening over them */
+  --shadow-sheet: 0 4px 18px #0005; /* the bottom sheet, the participant card */
+  --shadow-chip: 0 1px 4px #0005; /* a fixed-colour chip drawn on the tiles */
+
+  /* ---- Map markers ----------------------------------------------------- */
+  /* Fixed values, never theme-shifted: these sit on tiles and must read the
+     same on Atlas, Voyager and Dark Matter. The recipe is one white ring, one
+     dark hairline outside it so the silhouette survives pale streets and
+     near-black ones, and one drop shadow. */
+  --marker-ring: 2.5px;
+  --marker-casing: 0 0 0 1.5px #0f172a80;
+  --shadow-marker: 0 2px 6px #0006;
+
+  /* ---- Map furniture geometry ------------------------------------------ */
+  --map-edge: 10px; /* every floating control's gap from the map's edge */
+  --map-gap: 8px; /* the gap between two floating things */
+
+  /* ---- The one type rung the system does not name ---------------------- */
+  /* 14px is what every control label in this app already was, and it sits in
+     the system's own gap between --text-sm (13) and --text-base (15). Named
+     here rather than repeated forty times as a literal. */
+  --text-control: 14px;
+
+  /* ---- The wordmark ---------------------------------------------------- */
+  /* The brand has its own scale by right; it is a mark, not body copy. */
+  --wordmark: 19px; /* in the header */
+  --wordmark-map: 26px; /* in the floating pill on a map-first screen */
+}
