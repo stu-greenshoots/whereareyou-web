@@ -1956,8 +1956,14 @@ body.map-first .header { display: none; }
   pointer-events: auto;
   cursor: pointer;
 }
-/* The visual is compact; the touch target is not. */
-.osi-pill::after { content: ''; position: absolute; inset: -9px; }
+/* The visual is compact; the touch target is not. The vertical inset is
+   derived from the pill's own height rather than guessed, so a one- or
+   two-line pill both land exactly on the floor. */
+.osi-pill::after {
+  content: '';
+  position: absolute;
+  inset: calc((100% - var(--control)) / 2) 0;
+}
 .osi-pill:hover { background: #ffffff; border-color: #0f172a66; }
 .osi-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 /* The marker motif: the placed diamond, in miniature. */
@@ -2070,6 +2076,36 @@ body.map-first .header { display: none; }
   cursor: pointer;
 }
 .live-tab-active { color: var(--text); border-bottom-color: var(--accent); }
+/* ---- The touch floor on small text affordances --------------------------
+   A handful of affordances have to stay visually small — the wordmark, the
+   header nav, the quiet notify line, a concertina's summary row — but the
+   system's floor is not negotiable: nothing interactive is under 44px, and a
+   frightened person's shaking thumb is exactly who these rules are for.
+
+   So the BOX stays where the design wants it and the TARGET is grown around
+   it, which is the same trick the off-screen edge pills and the close control
+   already use. The overlay is horizontal-only, so a stack of these cannot
+   swallow its neighbour's taps. */
+.brand,
+.nav-item,
+summary.panel-title,
+.code-utility .notify-row .link-button {
+  position: relative;
+}
+.brand::after,
+.nav-item::after,
+.code-utility .notify-row .link-button::after,
+/* A summary spends its own ::after on the disclosure chevron, so its target is
+   grown with a ::before instead. */
+summary.panel-title::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - var(--control) / 2);
+  height: var(--control);
+}
+
 /* ---- Close, said one way ------------------------------------------------
    Dismissing something was expressed six different ways across this app: an
    SVG cross at three sizes, a text ✕ at two, and a × (a different character
