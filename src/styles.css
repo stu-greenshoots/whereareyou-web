@@ -196,8 +196,13 @@
 .link-button {
   background: none;
   border: 0;
-  /* A link, but still a target: --space-6 on the block axis is what carries a
-     14px line over the 44px floor. */
+  /* A link, but still a target. The padding does most of it; the floor is
+     stated as well because a mono line box (the code in a history row) is
+     shorter than a proportional one and would otherwise land at 42px. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control);
   padding: var(--space-6) var(--space-5);
   cursor: pointer;
   font-size: var(--text-control);
@@ -2672,7 +2677,14 @@ summary.panel-title::before {
   font-variant-numeric: tabular-nums;
 }
 .utility-extend .seg-row { flex: 1; }
-.code-utility .notify-row .link-button { padding: 4px 0; text-align: left; }
+/* The one deliberately quiet link: it heads a utility cluster and must not
+   read as a third button. It keeps its 44px TARGET from the hit-area rule
+   above, so only the box shrinks. */
+.code-utility .notify-row .link-button {
+  min-height: 0;
+  padding: var(--space-2) 0;
+  text-align: left;
+}
 .extend-note {
   margin: 0;
   font-size: var(--text-sm);
